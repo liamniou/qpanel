@@ -273,7 +273,7 @@ def monitor_paused_up_torrents_job():
                             log_entry = ActionLog(
                                 instance_id=instance.id,
                                 action="pausedUP torrents detected",
-                                details=f"Torrent: '{torrent.hash}'" # Log hash to prevent duplicates
+                                details=f"Torrent: '{torrent.name}'" # Log hash to prevent duplicates
                             )
                             db.session.add(log_entry)
                         db.session.commit()
