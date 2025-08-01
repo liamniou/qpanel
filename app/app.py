@@ -176,10 +176,11 @@ def clear_telegram_messages():
 @app.route('/settings', methods=['GET', 'POST'])
 def settings():
     if request.method == 'POST':
+        current_settings = load_settings()
         new_settings = {
             'scheduler_interval_minutes': int(request.form['scheduler_interval_minutes']),
             'cache_duration_minutes': int(request.form['cache_duration_minutes']),
-            'telegram_bot_token': request.form['telegram_bot_token'],
+            'telegram_bot_token': request.form['telegram_bot_token'] if request.form['telegram_bot_token'] else current_settings.get('telegram_bot_token', ''),
             'telegram_chat_id': request.form['telegram_chat_id'],
             'telegram_notification_enabled': request.form.get('telegram_notification_enabled') == 'on'
         }
