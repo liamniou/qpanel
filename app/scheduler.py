@@ -145,7 +145,7 @@ def tag_torrents_with_no_hard_links(instance, client, torrents):
                             settings = load_settings()
                             if settings.get('telegram_notification_enabled'):
                                 message = f"Torrent '{torrent.name}' on '{instance.name}' was tagged with 'noHL' because it has no hard links and was completed over an hour ago."
-                                send_telegram_message(settings.get('telegram_bot_token'), settings.get('telegram_chat_id'), message)
+                                send_telegram_message(settings.get('telegram_bot_token'), settings.get('telegram_chat_id'), message, parse_mode='HTML')
         
     except Exception as e:
         logger.error(f"Failed to check for no hard links for {instance.name}: {e}")
@@ -187,7 +187,7 @@ def tag_unregistered_torrents_for_instance(instance, client, torrents):
                 settings = load_settings()
                 if settings.get('telegram_notification_enabled'):
                     message = f"Tagged '{torrent.name}' as unregistered on '{instance.name}'.\nTracker status: {offending_msg}"
-                    if send_telegram_message(settings.get('telegram_bot_token'), settings.get('telegram_chat_id'), message):
+                    if send_telegram_message(settings.get('telegram_bot_token'), settings.get('telegram_chat_id'), message, parse_mode='HTML'):
                         new_message = TelegramMessage(message=message)
                         db.session.add(new_message)
         else:
@@ -282,7 +282,7 @@ def monitor_paused_up_torrents_job():
                         settings = load_settings()
                         if settings.get('telegram_notification_enabled'):
                             message = f"PausedUP torrents detected on '{instance.name}':\n" + "\n".join(torrent_links)
-                            send_telegram_message(settings.get('telegram_bot_token'), settings.get('telegram_chat_id'), message)
+                            send_telegram_message(settings.get('telegram_bot_token'), settings.get('telegram_chat_id'), message, parse_mode='HTML')
 
             except Exception as e:
                 logging.error(f"An unexpected error occurred in monitor_paused_up_torrents_job for instance '{instance.name}': {e}")

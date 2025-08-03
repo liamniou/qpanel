@@ -6,10 +6,10 @@ from app import db, Instance, TelegramMessage, ActionLog, load_settings
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s")
 
-def send_telegram_message(bot_token, chat_id, message):
+def send_telegram_message(bot_token, chat_id, message, parse_mode='HTML'):
     """Sends a message to a Telegram bot."""
     url = f"https://api.telegram.org/bot{bot_token}/sendMessage"
-    params = {"chat_id": chat_id, "text": message}
+    params = {"chat_id": chat_id, "text": message, "parse_mode": parse_mode}
     try:
         response = httpx.post(url, params=params)
         response.raise_for_status()

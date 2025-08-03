@@ -1,9 +1,38 @@
+import requests
 import logging
 from app import db, Instance, TelegramMessage, ActionLog, load_settings
 from log_parser import send_telegram_message
 from qbt_client import get_client
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s")
+
+logger = logging.getLogger(__name__)
+
+def send_telegram_message(bot_token, chat_id, message, parse_mode=None):
+    """
+    Sends a message to a specified Telegram chat.
+    """
+    if not bot_token or not chat_id:
+        logger.warning("Telegram bot token or chat ID is not configured.")
+        return False
+    
+    url = f"https://api.telegram.org/bot{bot_token}/sendMessage"
+    payload = {
+        'chat_id': chat_id,
+        'text': message,
+        'disable_web_page_preview': True
+    }
+    if parse_mode:
+        payload['parse_mode'] = parse_mode
+        
+    try:
+        response = requests.post(url, json=payload, timeout=10)
+        response.raise_for_status()  # Raise an exception for bad status codes
+        logger.info("Successfully sent Telegram message.")
+        return True
+    except requests.exceptions.RequestException as e:
+        logger.error(f"Failed to send Telegram message: {e}")
+        return False
 
 def pause_cross_seeded_torrents_for_instance(instance, client):
     """
@@ -37,7 +66,7 @@ def pause_cross_seeded_torrents_for_instance(instance, client):
                 db.session.add(action)
                 
                 if settings.get('telegram_notification_enabled'):
-                    if send_telegram_message(settings['telegram_bot_token'], settings['telegram_chat_id'], message_text):
+                    if send_telegram_message(settings['telegram_bot_token'], settings['telegram_chat_id'], message_text, parse_mode='HTML'):
                         new_message = TelegramMessage(message=message_text)
                         db.session.add(new_message)
 
