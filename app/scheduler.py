@@ -265,15 +265,15 @@ def monitor_paused_up_torrents_job():
                     newly_paused_up_torrents = [t for t in paused_up_torrents if t.hash not in already_logged_hashes]
 
                     if newly_paused_up_torrents:
-                        torrent_names = [t.name for t in newly_paused_up_torrents]
-                        logger.info(f"Found {len(torrent_names)} new pausedUP torrents on {instance.name}: {', '.join(torrent_names)}")
+                        torrent_links = [f"<a href='{instance.host}/#/torrent/{t.hash}'>{t.name}</a>" for t in newly_paused_up_torrents]
+                        logger.info(f"Found {len(torrent_links)} new pausedUP torrents on {instance.name}: {', '.join(torrent_links)}")
                         
                         # Log action
                         for torrent in newly_paused_up_torrents:
                             log_entry = ActionLog(
                                 instance_id=instance.id,
                                 action="pausedUP torrents detected",
-                                details=f"Torrent: '{torrent.name}'" # Log hash to prevent duplicates
+                                details=f"Torrent: '{torrent.hash}'" # Log hash to prevent duplicates
                             )
                             db.session.add(log_entry)
                         db.session.commit()
@@ -281,7 +281,7 @@ def monitor_paused_up_torrents_job():
                         # Send Telegram notification
                         settings = load_settings()
                         if settings.get('telegram_notification_enabled'):
-                            message = f"PausedUP torrents detected on '{instance.name}':\n" + "\n".join(torrent_names)
+                            message = f"PausedUP torrents detected on '{instance.name}':\n" + "\n".join(torrent_links)
                             send_telegram_message(settings.get('telegram_bot_token'), settings.get('telegram_chat_id'), message)
 
             except Exception as e:
