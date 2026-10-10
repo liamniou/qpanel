@@ -99,6 +99,14 @@ class ActionLog(db.Model):
     action = db.Column(db.String(255), nullable=False)
     details = db.Column(db.Text, nullable=True)
 
+class ArrInstance(db.Model):
+    id = db.Column(db.Integer, primary_key=True)
+    name = db.Column(db.String(100), nullable=False, unique=True)
+    arr_type = db.Column(db.String(20), nullable=False)  # 'sonarr' or 'radarr'
+    url = db.Column(db.String(200), nullable=False)
+    api_key = db.Column(db.String(100), nullable=False)
+    remove_category_on_cf_not_upgrade = db.Column(db.Boolean, default=False)
+
 class OrphanedFile(db.Model):
     id = db.Column(db.Integer, primary_key=True)
     timestamp = db.Column(db.DateTime, default=datetime.utcnow, nullable=False)
@@ -205,7 +213,70 @@ def settings():
         flash('Settings saved successfully! Please restart the application for the new interval to take effect.', 'success')
         return redirect(url_for('settings'))
 
-    return render_template('settings.html', settings=load_settings())
+    arr_instances = ArrInstance.query.order_by(ArrInstance.name).all()
+    return render_template('settings.html', settings=load_settings(), arr_instances=arr_instances)
+
+ARR_TYPES = ('sonarr', 'radarr')
+
+def _arr_form_values():
+    return {
+        'name': request.form.get('name', '').strip(),
+        'arr_type': request.form.get('arr_type', '').strip().lower(),
+        'url': request.form.get('url', '').strip().rstrip('/'),
+        'api_key': request.form.get('api_key', '').strip(),
+        'remove_category_on_cf_not_upgrade': request.form.get('remove_category_on_cf_not_upgrade') == 'true',
+    }
+
+@app.route('/settings/arr', methods=['POST'])
+def add_arr_instance():
+    values = _arr_form_values()
+    if not values['name'] or not values['url'] or not values['api_key'] or values['arr_type'] not in ARR_TYPES:
+        flash('Name, type, URL and API key are required.', 'danger')
+        return redirect(url_for('settings'))
+    if ArrInstance.query.filter_by(name=values['name']).first():
+        flash(f"An arr instance named '{values['name']}' already exists.", 'danger')
+        return redirect(url_for('settings'))
+    db.session.add(ArrInstance(**values))
+    db.session.commit()
+    flash(f"{values['arr_type'].capitalize()} instance '{values['name']}' added.", 'success')
+    return redirect(url_for('settings'))
+
+@app.route('/settings/arr/<int:arr_id>', methods=['POST'])
+def edit_arr_instance(arr_id):
+    arr = ArrInstance.query.get_or_404(arr_id)
+    values = _arr_form_values()
+    if not values['name'] or not values['url'] or values['arr_type'] not in ARR_TYPES:
+        flash('Name, type and URL are required.', 'danger')
+        return redirect(url_for('settings'))
+    duplicate = ArrInstance.query.filter(ArrInstance.name == values['name'], ArrInstance.id != arr.id).first()
+    if duplicate:
+        flash(f"An arr instance named '{values['name']}' already exists.", 'danger')
+        return redirect(url_for('settings'))
+    if not values['api_key']:
+        values.pop('api_key')  # keep existing key when the field is left blank
+    for key, value in values.items():
+        setattr(arr, key, value)
+    db.session.commit()
+    flash(f"Arr instance '{arr.name}' updated.", 'success')
+    return redirect(url_for('settings'))
+
+@app.route('/settings/arr/<int:arr_id>/delete', methods=['POST'])
+def delete_arr_instance(arr_id):
+    arr = ArrInstance.query.get_or_404(arr_id)
+    db.session.delete(arr)
+    db.session.commit()
+    flash(f"Arr instance '{arr.name}' deleted.", 'success')
+    return redirect(url_for('settings'))
+
+@app.route('/api/test-arr/<int:arr_id>', methods=['POST'])
+def test_arr_instance(arr_id):
+    from arr_client import get_system_status
+    arr = ArrInstance.query.get_or_404(arr_id)
+    try:
+        status = get_system_status(arr)
+        return jsonify({'status': 'success', 'message': f"{status.get('appName', arr.arr_type)} v{status.get('version', '?')}"})
+    except Exception as e:
+        return jsonify({'status': 'error', 'message': f"Connection to '{arr.name}' failed: {e}"})
 
 def group_orphaned_files_by_directory(orphaned_files):
     """

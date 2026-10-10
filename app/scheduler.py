@@ -1,4 +1,4 @@
-from app import app, db, Instance, ActionLog, OrphanedFile
+from app import app, db, Instance, ActionLog, OrphanedFile, ArrInstance
 from qbt_client import get_client, get_all_torrents
 from flask import flash
 import logging
@@ -80,6 +80,15 @@ def run_all_jobs():
                 except Exception as e:
                     logger.error(f"Error in tag_torrents_with_no_hard_links for '{instance.name}': {e}")
                     db.session.rollback()
+        
+        # Phase 3b: Clear category for arr downloads rejected as "Not a Custom Format upgrade"
+        logger.info("Phase 3b: Checking arr queues for 'Not a Custom Format upgrade' downloads...")
+        try:
+            clear_category_for_cf_not_upgrade(instance_cache)
+            db.session.commit()
+        except Exception as e:
+            logger.error(f"Error in clear_category_for_cf_not_upgrade: {e}")
+            db.session.rollback()
         
         # Phase 4: Apply rules
         logger.info("Phase 4: Applying rules...")
@@ -283,6 +292,44 @@ def tag_torrents_with_no_hard_links(instance, client, torrents):
         
     except Exception as e:
         logger.error(f"Failed to check for no hard links for {instance.name}: {e}")
+
+def clear_category_for_cf_not_upgrade(instance_cache):
+    """
+    Removes the qBittorrent category from torrents that Sonarr/Radarr refuse to import because
+    they are "Not a Custom Format upgrade". Without its category the arr stops tracking the
+    download, so it disappears from the arr queue while the torrent keeps seeding.
+    """
+    from arr_client import find_cf_not_upgrade_downloads
+
+    for arr in ArrInstance.query.filter_by(remove_category_on_cf_not_upgrade=True).all():
+        try:
+            rejected = find_cf_not_upgrade_downloads(arr)
+        except Exception as e:
+            logger.error(f"Failed to read queue from arr instance '{arr.name}': {e}")
+            continue
+
+        logger.info(f"'{arr.name}' has {len(rejected)} download(s) stuck as 'Not a Custom Format upgrade'.")
+        if not rejected:
+            continue
+
+        for cache in instance_cache.values():
+            instance, client = cache['instance'], cache['client']
+            for torrent in cache['torrents']:
+                if torrent.hash.lower() not in rejected or not torrent.category:
+                    continue
+                old_category = torrent.category
+                try:
+                    client.torrents_set_category(category='', torrent_hashes=torrent.hash)
+                    torrent.category = ''
+                except Exception as e:
+                    logger.error(f"Failed to clear category for '{torrent.name}' on '{instance.name}': {e}")
+                    continue
+                logger.info(f"Removed category '{old_category}' from '{torrent.name}' on '{instance.name}' ({arr.name}: not a Custom Format upgrade).")
+                db.session.add(ActionLog(
+                    instance_id=instance.id,
+                    action=f"Removed category '{old_category}' from '{torrent.name}'",
+                    details=f"{arr.name}: not a Custom Format upgrade for existing file(s); removed from {arr.arr_type} queue."
+                ))
 
 def tag_unregistered_torrents_for_instance(instance, client, torrents):
     """Tags torrents with 'unregistered' if their tracker status indicates they are no longer registered."""

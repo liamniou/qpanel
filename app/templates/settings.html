@@ -87,6 +87,91 @@
 
     <hr class="my-3">
 
+    <div class="card mb-4">
+        <div class="card-header">
+            <h4>Sonarr / Radarr</h4>
+        </div>
+        <div class="card-body">
+            {% if arr_instances %}
+            <div class="table-responsive mb-3">
+                <table class="table table-hover align-middle mb-0">
+                    <thead>
+                        <tr>
+                            <th>Name</th>
+                            <th>Type</th>
+                            <th>URL</th>
+                            <th>Clear category on CF reject</th>
+                            <th class="text-end">Actions</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {% for arr in arr_instances %}
+                        <tr>
+                            <td>{{ arr.name }}</td>
+                            <td>{{ arr.arr_type|capitalize }}</td>
+                            <td><code>{{ arr.url }}</code></td>
+                            <td>
+                                {% if arr.remove_category_on_cf_not_upgrade %}
+                                <span class="badge bg-success">Enabled</span>
+                                {% else %}
+                                <span class="badge bg-secondary">Disabled</span>
+                                {% endif %}
+                            </td>
+                            <td class="text-end text-nowrap">
+                                <button type="button" class="btn btn-sm btn-outline-secondary" id="test-arr-{{ arr.id }}-btn" onclick="testArr({{ arr.id }})">Test</button>
+                                <button type="button" class="btn btn-sm btn-primary"
+                                        data-arr-id="{{ arr.id }}" data-arr-name="{{ arr.name }}" data-arr-type="{{ arr.arr_type }}"
+                                        data-arr-url="{{ arr.url }}" data-arr-cf="{{ 'true' if arr.remove_category_on_cf_not_upgrade else 'false' }}"
+                                        onclick="editArr(this)">Edit</button>
+                                <form method="post" action="{{ url_for('delete_arr_instance', arr_id=arr.id) }}" class="d-inline" onsubmit="return confirm('Delete {{ arr.name }}?');">
+                                    <button type="submit" class="btn btn-sm btn-danger">Delete</button>
+                                </form>
+                            </td>
+                        </tr>
+                        {% endfor %}
+                    </tbody>
+                </table>
+            </div>
+            {% else %}
+            <p class="text-muted">No Sonarr/Radarr instances configured.</p>
+            {% endif %}
+
+            <h5 id="arr-form-title">Add Instance</h5>
+            <form method="post" id="arr-form" action="{{ url_for('add_arr_instance') }}" data-add-action="{{ url_for('add_arr_instance') }}">
+                <div class="row g-3">
+                    <div class="col-md-3">
+                        <label for="arr_name" class="form-label">Name</label>
+                        <input type="text" class="form-control" id="arr_name" name="name" placeholder="Sonarr" required>
+                    </div>
+                    <div class="col-md-2">
+                        <label for="arr_type" class="form-label">Type</label>
+                        <select class="form-select" id="arr_type" name="arr_type">
+                            <option value="sonarr">Sonarr</option>
+                            <option value="radarr">Radarr</option>
+                        </select>
+                    </div>
+                    <div class="col-md-4">
+                        <label for="arr_url" class="form-label">URL</label>
+                        <input type="url" class="form-control" id="arr_url" name="url" placeholder="http://192.168.0.237:8989" required>
+                    </div>
+                    <div class="col-md-3">
+                        <label for="arr_api_key" class="form-label">API Key</label>
+                        <input type="password" class="form-control" id="arr_api_key" name="api_key" autocomplete="new-password" required>
+                    </div>
+                </div>
+                <div class="form-check form-switch mt-3">
+                    <input class="form-check-input" type="checkbox" id="arr_cf" name="remove_category_on_cf_not_upgrade" value="true">
+                    <label class="form-check-label" for="arr_cf">Remove qBittorrent category for "Not a Custom Format upgrade" downloads</label>
+                    <small class="form-text text-muted d-block">Completed downloads that this instance refuses to import only because they don't improve on existing files' custom formats get their category cleared, so they leave the queue and keep seeding. Downloads with other import errors are left alone.</small>
+                </div>
+                <div class="mt-3">
+                    <button type="submit" class="btn btn-primary" id="arr-submit-btn">Add</button>
+                    <button type="button" class="btn btn-secondary d-none" id="arr-cancel-btn" onclick="resetArrForm()">Cancel</button>
+                </div>
+            </form>
+        </div>
+    </div>
+
     <div class="card border-danger">
         <div class="card-header bg-danger text-white">
             <h3>Danger Zone</h3>
@@ -132,6 +217,63 @@
                 discordFields.style.display = this.checked ? 'block' : 'none';
             });
         });
+
+        function editArr(btn) {
+            const form = document.getElementById('arr-form');
+            form.action = `/settings/arr/${btn.dataset.arrId}`;
+            document.getElementById('arr_name').value = btn.dataset.arrName;
+            document.getElementById('arr_type').value = btn.dataset.arrType;
+            document.getElementById('arr_url').value = btn.dataset.arrUrl;
+            const apiKey = document.getElementById('arr_api_key');
+            apiKey.value = '';
+            apiKey.required = false;
+            apiKey.placeholder = 'Leave blank to keep current key';
+            document.getElementById('arr_cf').checked = btn.dataset.arrCf === 'true';
+            document.getElementById('arr-form-title').textContent = `Edit ${btn.dataset.arrName}`;
+            document.getElementById('arr-submit-btn').textContent = 'Save';
+            document.getElementById('arr-cancel-btn').classList.remove('d-none');
+            form.scrollIntoView({ behavior: 'smooth' });
+        }
+
+        function resetArrForm() {
+            const form = document.getElementById('arr-form');
+            form.reset();
+            form.action = form.dataset.addAction;
+            const apiKey = document.getElementById('arr_api_key');
+            apiKey.required = true;
+            apiKey.placeholder = '';
+            document.getElementById('arr-form-title').textContent = 'Add Instance';
+            document.getElementById('arr-submit-btn').textContent = 'Add';
+            document.getElementById('arr-cancel-btn').classList.add('d-none');
+        }
+
+        function testArr(id) {
+            const btn = document.getElementById(`test-arr-${id}-btn`);
+            const originalText = btn.innerHTML;
+            btn.disabled = true;
+            btn.innerHTML = '<span class="spinner-border spinner-border-sm" role="status"></span>';
+            fetch(`/api/test-arr/${id}`, { method: 'POST' })
+                .then(response => response.json())
+                .then(data => {
+                    const ok = data.status === 'success';
+                    btn.innerHTML = ok ? data.message : 'Failed';
+                    btn.classList.replace('btn-outline-secondary', ok ? 'btn-success' : 'btn-danger');
+                    if (!ok) alert(data.message);
+                })
+                .catch(error => {
+                    btn.innerHTML = 'Error';
+                    btn.classList.replace('btn-outline-secondary', 'btn-danger');
+                    alert('Network error: ' + error);
+                })
+                .finally(() => {
+                    btn.disabled = false;
+                    setTimeout(() => {
+                        btn.innerHTML = originalText;
+                        btn.classList.remove('btn-success', 'btn-danger');
+                        btn.classList.add('btn-outline-secondary');
+                    }, 3000);
+                });
+        }
 
         function testNotification(type) {
             const btn = document.getElementById(`test-${type}-btn`);

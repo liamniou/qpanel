@@ -15,7 +15,8 @@ The tool can:
     - If one of the `trackers` is `bt.t-ru.org`, set `Max Upload Speed (KiB/s)` to `10`.
 - tag torrents that don't have hard links with tag `noHL` (useful for torrent clients used by Sonarr/Radarr);
 - pause cross-seeded torrents;
-- tag "unregistered" torrents with tag `unregistered`.
+- tag "unregistered" torrents with tag `unregistered`;
+- remove the qBittorrent category from completed downloads that Sonarr/Radarr won't import because they are "Not a Custom Format upgrade" for existing files, so they leave the arr queue but keep seeding (configure Sonarr/Radarr instances under **Settings**).
 
 ## Getting Started
 
