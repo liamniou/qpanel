@@ -146,6 +146,49 @@ def run_all_jobs():
         logger.info("=== Unified scheduler cycle complete ===")
 
 
+RULE_LIMIT_FIELDS = ('share_limit_ratio', 'share_limit_time', 'max_upload_speed', 'max_download_speed')
+TORRENT_LIMIT_ATTRS = {
+    'share_limit_ratio': 'ratio_limit',
+    'share_limit_time': 'seeding_time_limit',
+    'max_upload_speed': 'up_limit',
+    'max_download_speed': 'dl_limit',
+}
+
+
+def rule_matches(rule, torrent, get_tracker_urls) -> bool:
+    """True if ANY of the rule's comma-separated values matches the torrent's tags/trackers."""
+    rule_values = [v.strip() for v in rule.condition_value.split(',') if v.strip()]
+    if rule.condition_type == 'tag':
+        current_tags = {t.strip() for t in torrent.tags.split(',') if t.strip()}
+        return any(value in current_tags for value in rule_values)
+    if rule.condition_type == 'tracker':
+        return any(value in url for url in get_tracker_urls() for value in rule_values)
+    return False
+
+
+def resolve_rules_for_torrent(rules, torrent, get_tracker_urls):
+    """
+    Walks rules in order and returns (matched_rules, effective_limits).
+
+    Every matching rule applies; a later rule overrides limits set by an earlier one.
+    A matching rule with stop_processing ends the walk.
+    """
+    matched = []
+    for rule in rules:
+        if rule_matches(rule, torrent, get_tracker_urls):
+            matched.append(rule)
+            if rule.stop_processing:
+                break
+
+    effective = {}
+    for rule in matched:
+        for field in RULE_LIMIT_FIELDS:
+            value = getattr(rule, field)
+            if value is not None:
+                effective[field] = value
+    return matched, effective
+
+
 def apply_rules_for_instance(instance, client, torrents):
     """
     Applies rules to a single instance.
@@ -153,79 +196,60 @@ def apply_rules_for_instance(instance, client, torrents):
     logger.info(f"Checking rules for instance: {instance.name}")
     logger.debug(f"Found {len(torrents)} torrents in '{instance.name}'.")
 
+    rules = sorted(instance.rules, key=lambda r: (r.priority is None, r.priority or 0, r.id))
+    if not rules:
+        return
+
     for torrent in torrents:
-        for rule in instance.rules:
-            matched = False
-            # Parse rule condition values (can be comma-separated for multi-select)
-            rule_values = [v.strip() for v in rule.condition_value.split(',') if v.strip()]
-            
-            # Robustly check for tag match - match if ANY rule value matches ANY torrent tag
-            if rule.condition_type == 'tag':
-                current_tags = [t.strip() for t in torrent.tags.split(',') if t.strip()]
-                for rule_value in rule_values:
-                    if rule_value in current_tags:
-                        matched = True
-                        break
-            
-            # Check for tracker match - match if ANY rule value matches ANY tracker
-            elif rule.condition_type == 'tracker':
-                for tracker in torrent.trackers:
-                    for rule_value in rule_values:
-                        if rule_value in tracker.url:
-                            matched = True
-                            break
-                    if matched:
-                        break
-            
-            if matched:
-                # Check if the rule is already applied by comparing limits.
-                is_already_applied = True
-                if rule.share_limit_ratio is not None and torrent.ratio_limit != rule.share_limit_ratio:
-                    is_already_applied = False
-                if rule.share_limit_time is not None and torrent.seeding_time_limit != rule.share_limit_time:
-                    is_already_applied = False
-                if rule.max_upload_speed is not None and torrent.up_limit != rule.max_upload_speed:
-                    is_already_applied = False
-                if rule.max_download_speed is not None and torrent.dl_limit != rule.max_download_speed:
-                    is_already_applied = False
+        tracker_urls = None
 
-                if is_already_applied:
-                    logger.debug(f"Torrent '{torrent.name}' already conforms to rule '{rule.name}'. Skipping.")
-                else:
-                    logger.info(f"Torrent '{torrent.name}' matched rule '{rule.name}'. Applying limits.")
+        def get_tracker_urls():
+            # Each access to torrent.trackers is an API call, so fetch at most once per torrent.
+            nonlocal tracker_urls
+            if tracker_urls is None:
+                tracker_urls = [tracker.url for tracker in torrent.trackers]
+            return tracker_urls
 
-                    # Set share limits only if they are defined in the rule
-                    if rule.share_limit_ratio is not None or rule.share_limit_time is not None:
-                        client.torrents_set_share_limits(
-                            torrent_hashes=torrent.hash,
-                            ratio_limit=rule.share_limit_ratio if rule.share_limit_ratio is not None else -2,
-                            seeding_time_limit=rule.share_limit_time if rule.share_limit_time is not None else -2,
-                            inactive_seeding_time_limit=-2
-                        )
-                    
-                    # Set speed limits
-                    if rule.max_upload_speed is not None:
-                        client.torrents_set_upload_limit(limit=rule.max_upload_speed, torrent_hashes=torrent.hash)
-                    if rule.max_download_speed is not None:
-                        client.torrents_set_download_limit(limit=rule.max_download_speed, torrent_hashes=torrent.hash)
+        matched, effective = resolve_rules_for_torrent(rules, torrent, get_tracker_urls)
+        if not effective:
+            continue
 
-                    # Log the action
-                    details_parts = []
-                    if rule.share_limit_ratio is not None:
-                        details_parts.append(f"Share Ratio: {rule.share_limit_ratio}")
-                    if rule.share_limit_time is not None:
-                        details_parts.append(f"Seeding Time: {rule.share_limit_time}m")
-                    if rule.max_upload_speed is not None:
-                        details_parts.append(f"Up: {rule.max_upload_speed // 1024}KiB/s")
-                    if rule.max_download_speed is not None:
-                        details_parts.append(f"Down: {rule.max_download_speed // 1024}KiB/s")
-                    
-                    details = ", ".join(details_parts)
-                    log_entry = ActionLog(instance_id=instance.id, action=f"Applied rule '{rule.name}' to '{torrent.name}'", details=details)
-                    db.session.add(log_entry)
-                
-                # Once a rule is matched and applied, we can stop checking other rules for this torrent.
-                break
+        rule_names = ", ".join(f"'{rule.name}'" for rule in matched)
+        if all(getattr(torrent, TORRENT_LIMIT_ATTRS[field]) == value for field, value in effective.items()):
+            logger.debug(f"Torrent '{torrent.name}' already conforms to rule(s) {rule_names}. Skipping.")
+            continue
+
+        logger.info(f"Torrent '{torrent.name}' matched rule(s) {rule_names}. Applying limits.")
+
+        # Set share limits only if a matched rule defines them
+        if 'share_limit_ratio' in effective or 'share_limit_time' in effective:
+            client.torrents_set_share_limits(
+                torrent_hashes=torrent.hash,
+                ratio_limit=effective.get('share_limit_ratio', -2),
+                seeding_time_limit=effective.get('share_limit_time', -2),
+                inactive_seeding_time_limit=-2
+            )
+
+        if 'max_upload_speed' in effective:
+            client.torrents_set_upload_limit(limit=effective['max_upload_speed'], torrent_hashes=torrent.hash)
+        if 'max_download_speed' in effective:
+            client.torrents_set_download_limit(limit=effective['max_download_speed'], torrent_hashes=torrent.hash)
+
+        details_parts = []
+        if 'share_limit_ratio' in effective:
+            details_parts.append(f"Share Ratio: {effective['share_limit_ratio']}")
+        if 'share_limit_time' in effective:
+            details_parts.append(f"Seeding Time: {effective['share_limit_time']}m")
+        if 'max_upload_speed' in effective:
+            details_parts.append(f"Up: {effective['max_upload_speed'] // 1024}KiB/s")
+        if 'max_download_speed' in effective:
+            details_parts.append(f"Down: {effective['max_download_speed'] // 1024}KiB/s")
+        if matched[-1].stop_processing:
+            details_parts.append(f"stopped at '{matched[-1].name}'")
+
+        label = "rule" if len(matched) == 1 else "rules"
+        log_entry = ActionLog(instance_id=instance.id, action=f"Applied {label} {rule_names} to '{torrent.name}'", details=", ".join(details_parts))
+        db.session.add(log_entry)
 
 def get_arr_import_blocked_hashes() -> Optional[Set[str]]:
     """

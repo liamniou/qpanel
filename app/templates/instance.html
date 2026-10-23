@@ -162,7 +162,7 @@
                     <div class="card-header with-actions">
                         <div>
                             <h3 class="card-title">Rules</h3>
-                            <p class="card-description">Seeding and speed limits applied to matching torrents on this instance.</p>
+                            <p class="card-description">Seeding and speed limits applied to matching torrents on this instance, top to bottom in the order set on the Rules page.</p>
                         </div>
                         <a class="btn btn-outline-secondary btn-sm" href="{{ url_for('rules') }}"><i class="bi bi-sliders"></i>Manage rules</a>
                     </div>
@@ -177,7 +177,7 @@
                                     <tbody>
                                         {% for rule in instance.rules %}
                                         <tr>
-                                            <td>{{ rule.name }}</td>
+                                            <td>{{ rule.name }}{% if rule.stop_processing %} <span class="badge bg-warning ms-1" title="Rules below are skipped for matching torrents"><i class="bi bi-sign-stop"></i>Stop</span>{% endif %}</td>
                                             <td><span class="badge badge-outline">{{ rule.condition_type }}</span> <span class="text-muted text-break-all">{{ rule.condition_value }}</span></td>
                                             <td class="text-end">
                                                 <form method="post" action="{{ url_for('remove_rule_from_instance', instance_id=instance.id, rule_id=rule.id) }}" class="d-inline">

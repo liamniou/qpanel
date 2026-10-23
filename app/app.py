@@ -62,6 +62,7 @@ class Instance(db.Model):
     username = db.Column(db.String(100))
     password = db.Column(db.String(100))
     rules = db.relationship('Rule', secondary=instance_rules, lazy='subquery',
+        order_by='Rule.priority',
         backref=db.backref('instances', lazy=True))
     logs = db.relationship('ActionLog', backref='instance', lazy=True, cascade="all, delete-orphan")
     qbt_download_dir = db.Column(db.String(500))
@@ -89,6 +90,10 @@ class Rule(db.Model):
     share_limit_time = db.Column(db.Integer)  # in minutes
     max_upload_speed = db.Column(db.Integer)  # in bytes/s
     max_download_speed = db.Column(db.Integer)  # in bytes/s
+    # Rules are evaluated in ascending priority; every match applies, later ones override earlier limits.
+    priority = db.Column(db.Integer)
+    # When this rule matches, rules after it are not evaluated for that torrent.
+    stop_processing = db.Column(db.Boolean, default=False)
 
 class TelegramMessage(db.Model):
     id = db.Column(db.Integer, primary_key=True)
@@ -758,8 +763,11 @@ def refresh_rule_options():
 @app.route('/rules', methods=['GET', 'POST'])
 def rules():
     if request.method == 'POST':
+        max_priority = db.session.query(db.func.max(Rule.priority)).scalar() or 0
         new_rule = Rule(
             name=request.form['name'],
+            priority=max_priority + 1,
+            stop_processing=request.form.get('stop_processing') == 'true',
             condition_type=request.form['condition_type'],
             condition_value=request.form['condition_value'],
             share_limit_ratio=float(request.form['share_limit_ratio']) if request.form.get('share_limit_ratio') else None,
@@ -772,9 +780,24 @@ def rules():
         flash(f"Rule '{new_rule.name}' saved successfully!", 'success')
         return redirect(url_for('rules'))
     
-    rules = Rule.query.all()
+    rules = Rule.query.order_by(Rule.priority, Rule.id).all()
     instances = Instance.query.all()
     return render_template('rules.html', rules=rules, instances=instances)
+
+@app.route('/rules/<int:rule_id>/move/<direction>', methods=['POST'])
+def move_rule(rule_id, direction):
+    rules = Rule.query.order_by(Rule.priority, Rule.id).all()
+    index = next((i for i, r in enumerate(rules) if r.id == rule_id), None)
+    if index is None:
+        flash('Rule not found.', 'danger')
+        return redirect(url_for('rules'))
+    target = index - 1 if direction == 'up' else index + 1
+    if direction in ('up', 'down') and 0 <= target < len(rules):
+        rules[index], rules[target] = rules[target], rules[index]
+    for position, rule in enumerate(rules, start=1):
+        rule.priority = position
+    db.session.commit()
+    return redirect(url_for('rules', _anchor=f'rule-{rule_id}'))
 
 @app.route('/rules/edit/<rule_id>', methods=['GET', 'POST'])
 def edit_rule(rule_id):
@@ -788,6 +811,7 @@ def edit_rule(rule_id):
         rule.share_limit_time = int(request.form['share_limit_time']) if request.form.get('share_limit_time') else None
         rule.max_upload_speed = int(request.form['max_upload_speed']) * 1024 if request.form.get('max_upload_speed') else None
         rule.max_download_speed = int(request.form['max_download_speed']) * 1024 if request.form.get('max_download_speed') else None
+        rule.stop_processing = request.form.get('stop_processing') == 'true'
         db.session.commit()
         flash(f"Rule '{rule.name}' updated successfully!", 'success')
         return redirect(url_for('rules'))
@@ -854,18 +878,34 @@ def restart():
         flash(f'Error restarting application: {e}', 'danger')
     return redirect(url_for('settings'))
 
-def ensure_instance_columns():
-    """Adds Instance columns introduced after the table was created (create_all doesn't alter tables)."""
+def ensure_schema():
+    """Adds columns introduced after tables were created (create_all doesn't alter existing tables)."""
     from sqlalchemy import inspect, text
-    existing = {c['name'] for c in inspect(db.engine).get_columns('instance')}
-    if 'nohl_skip_arr_import_blocked' not in existing:
-        with db.engine.begin() as conn:
-            conn.execute(text('ALTER TABLE instance ADD COLUMN nohl_skip_arr_import_blocked BOOLEAN'))
+    inspector = inspect(db.engine)
+    added = {
+        'instance': [('nohl_skip_arr_import_blocked', 'BOOLEAN')],
+        'rule': [('priority', 'INTEGER'), ('stop_processing', 'BOOLEAN')],
+    }
+    with db.engine.begin() as conn:
+        for table, columns in added.items():
+            existing = {c['name'] for c in inspector.get_columns(table)}
+            for name, sql_type in columns:
+                if name not in existing:
+                    conn.execute(text(f'ALTER TABLE {table} ADD COLUMN {name} {sql_type}'))
+        # Seed priorities from the order rules were assigned to instances (the previous evaluation order).
+        if conn.execute(text('SELECT COUNT(*) FROM rule WHERE priority IS NULL')).scalar():
+            ordered = conn.execute(text("""
+                SELECT r.id FROM rule r
+                LEFT JOIN (SELECT rule_id, MIN(rowid) AS first_seen FROM instance_rules GROUP BY rule_id) ir ON ir.rule_id = r.id
+                ORDER BY r.priority IS NULL, r.priority, ir.first_seen IS NULL, ir.first_seen, r.id
+            """)).scalars().all()
+            for position, rule_id in enumerate(ordered, start=1):
+                conn.execute(text('UPDATE rule SET priority = :p WHERE id = :id'), {'p': position, 'id': rule_id})
 
 if __name__ == '__main__':
     with app.app_context():
         db.create_all()
-        ensure_instance_columns()
+        ensure_schema()
     
     settings = load_settings()
     from scheduler import run_all_jobs
