@@ -50,6 +50,6 @@ The tool can:
 All configuration is done through the web interface:
 
 - **Instances** – your qBittorrent clients and the Sonarr/Radarr instances qPanel talks to. Each qBittorrent instance has its own page with sections for *Connection*, *Download paths*, *Hard links (noHL)*, *Torrent hygiene* (cross-seed pausing, unregistered tagging), *Orphaned files* and *Rules* (assign rules to the instance).
-- **Rules** – reusable seeding/speed limits, matched by tracker, tag or category (exact category name). Each instance runs its assigned rules top to bottom in its own order (reorder them with the arrows in the instance's *Rules* section): every matching rule applies, a later rule overrides limits set by an earlier one, and a rule with **Stop processing other rules** ends the chain for torrents it matches (leave its limits empty for a pure "stop" rule).
+- **Rules** – reusable seeding/speed limits, matched by tracker, tag or category (exact category name). Each instance runs its assigned rules top to bottom in its own order (reorder them with the arrows in the instance's *Rules* section): every matching rule applies, a later rule overrides limits set by an earlier one, and a rule with **Stop processing other rules** ends the chain for torrents it matches (leave its limits empty for a pure "stop" rule, which also excludes matching torrents from automatic `noHL` tagging).
 - **Activity** – the action log and orphaned files found by the scanner.
 - **Settings** – scheduler interval, cache, notifications (Telegram/Discord) and maintenance actions. 

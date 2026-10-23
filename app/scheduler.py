@@ -191,6 +191,31 @@ def resolve_rules_for_torrent(rules, torrent, get_tracker_urls):
     return matched, effective
 
 
+def is_pure_stop_rule(rule) -> bool:
+    """A rule with "Stop processing other rules" and no limits of its own."""
+    return bool(rule.stop_processing) and all(getattr(rule, field) is None for field in RULE_LIMIT_FIELDS)
+
+
+def matching_pure_stop_rule(rules, torrent):
+    """
+    Returns the pure stop rule that ends the rule walk for this torrent, or None.
+
+    Such torrents are excluded from automatic noHL tagging as well as from rules.
+    """
+    tracker_urls = None
+
+    def get_tracker_urls():
+        nonlocal tracker_urls
+        if tracker_urls is None:
+            tracker_urls = [tracker.url for tracker in torrent.trackers]
+        return tracker_urls
+
+    matched, _ = resolve_rules_for_torrent(rules, torrent, get_tracker_urls)
+    if matched and is_pure_stop_rule(matched[-1]):
+        return matched[-1]
+    return None
+
+
 def apply_rules_for_instance(instance, client, torrents):
     """
     Applies rules to a single instance.
@@ -285,8 +310,17 @@ def tag_torrents_with_no_hard_links(instance, client, torrents, arr_import_block
 
     try:
         logger.info(f"Checking for torrents with no hard links in '{instance.name}'.")
-        
+
+        rules = list(instance.rules)
+        has_pure_stop_rule = any(is_pure_stop_rule(rule) for rule in rules)
+
         for torrent in torrents:
+            if has_pure_stop_rule:
+                stop_rule = matching_pure_stop_rule(rules, torrent)
+                if stop_rule is not None:
+                    logger.debug(f"Skipping no hard link check for '{torrent.name}': matched stop rule '{stop_rule.name}'.")
+                    continue
+
             has_hard_link = False
             # Use torrent's save_path, which is what qBittorrent reports
             torrent_save_path = torrent.save_path
