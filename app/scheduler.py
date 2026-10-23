@@ -67,14 +67,19 @@ def run_all_jobs():
         
         # Phase 3: Run tag_torrents_with_no_hard_links
         logger.info("Phase 3: Checking for torrents with no hard links...")
-        for instance in Instance.query.filter_by(tag_nohardlinks=True).all():
+        nohl_instances = Instance.query.filter_by(tag_nohardlinks=True).all()
+        arr_import_blocked = None
+        if any(i.nohl_skip_arr_import_blocked for i in nohl_instances):
+            arr_import_blocked = get_arr_import_blocked_hashes()
+        for instance in nohl_instances:
             if instance.id in instance_cache:
                 try:
                     cache = instance_cache[instance.id]
                     tag_torrents_with_no_hard_links(
                         cache['instance'], 
                         cache['client'], 
-                        cache['torrents']
+                        cache['torrents'],
+                        arr_import_blocked if instance.nohl_skip_arr_import_blocked else set()
                     )
                     db.session.commit()
                 except Exception as e:
@@ -217,8 +222,32 @@ def apply_rules_for_instance(instance, client, torrents):
                 # Once a rule is matched and applied, we can stop checking other rules for this torrent.
                 break
 
-def tag_torrents_with_no_hard_links(instance, client, torrents):
-    """Scheduled job to tag torrents with no hard links."""
+def get_arr_import_blocked_hashes() -> Optional[Set[str]]:
+    """
+    Returns hashes of completed downloads waiting for import in any configured Sonarr/Radarr,
+    or None if any arr queue couldn't be read (so callers can avoid tagging blindly).
+    """
+    from arr_client import find_import_blocked_hashes
+
+    hashes: Set[str] = set()
+    for arr in ArrInstance.query.all():
+        try:
+            hashes |= find_import_blocked_hashes(arr)
+        except Exception as e:
+            logger.error(f"Failed to read queue from arr instance '{arr.name}': {e}")
+            return None
+    logger.info(f"Found {len(hashes)} completed download(s) awaiting import in arr queues.")
+    return hashes
+
+
+def tag_torrents_with_no_hard_links(instance, client, torrents, arr_import_blocked: Optional[Set[str]] = frozenset()):
+    """
+    Scheduled job to tag torrents with no hard links.
+
+    Torrents whose hash is in arr_import_blocked are not tagged, since they are still waiting
+    for (manual) import. arr_import_blocked=None means the arr state is unknown, so no new
+    tags are added this cycle.
+    """
     if not instance.qbt_download_dir or not instance.mapped_download_dir:
         logger.warning(f"Skipping no hard link check for instance '{instance.name}' because path mapping is not configured.")
         return
@@ -279,6 +308,12 @@ def tag_torrents_with_no_hard_links(instance, client, torrents):
                     if torrent.completion_on > 0:
                         completion_time = datetime.fromtimestamp(torrent.completion_on)
                         if datetime.now() - completion_time > timedelta(hours=1):
+                            if arr_import_blocked is None:
+                                logger.info(f"Not tagging '{torrent.name}' with 'noHL': Sonarr/Radarr queue state is unknown.")
+                                continue
+                            if torrent.hash.lower() in arr_import_blocked:
+                                logger.info(f"Not tagging '{torrent.name}' with 'noHL': it is awaiting import in Sonarr/Radarr.")
+                                continue
                             client.torrents_add_tags(tags='noHL', torrent_hashes=torrent.hash)
                             logger.info(f"Added 'noHL' tag to '{torrent.name}' as it has no hard links and was completed over an hour ago.")
 

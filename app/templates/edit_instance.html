@@ -81,6 +81,11 @@
                         </div>
                         <div id="nohl_options" style="{% if not instance.tag_nohardlinks %}display: none;{% endif %}">
                             <div class="form-check form-switch mb-2">
+                                <input class="form-check-input" type="checkbox" id="nohl_skip_arr_import_blocked" name="nohl_skip_arr_import_blocked" value="true" {% if instance.nohl_skip_arr_import_blocked %}checked{% endif %}>
+                                <label class="form-check-label" for="nohl_skip_arr_import_blocked">Ignore torrents awaiting import in Sonarr/Radarr</label>
+                                <small class="form-text text-muted d-block">If enabled, completed torrents that are still in a Sonarr/Radarr queue waiting for import (e.g. "Manual Import required") are not tagged with 'noHL', so they stay in the arr queue until imported. Uses the Sonarr/Radarr instances configured in Settings.</small>
+                            </div>
+                            <div class="form-check form-switch mb-2">
                                 <input class="form-check-input" type="checkbox" id="remove_category_on_nohl_removal" name="remove_category_on_nohl_removal" value="true" {% if instance.remove_category_on_nohl_removal %}checked{% endif %}>
                                 <label class="form-check-label" for="remove_category_on_nohl_removal">Remove categories when noHL tag is set</label>
                                 <small class="form-text text-muted d-block">If enabled, the specified categories will be removed from a torrent when the 'noHL' tag is added (i.e., when no hard links are detected).</small>

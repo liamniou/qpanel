@@ -67,6 +67,7 @@ class Instance(db.Model):
     tag_nohardlinks = db.Column(db.Boolean, default=False)
     remove_category_on_nohl_removal = db.Column(db.Boolean, default=False)
     nohl_removal_categories = db.Column(db.Text, default='')
+    nohl_skip_arr_import_blocked = db.Column(db.Boolean, default=False)
     pause_cross_seeded_torrents = db.Column(db.Boolean, default=False)
     tag_unregistered_torrents = db.Column(db.Boolean, default=False)
     orphaned_scan_enabled = db.Column(db.Boolean, default=False)
@@ -618,6 +619,7 @@ def edit_instance(instance_id):
         instance.tag_nohardlinks = request.form.get('tag_nohardlinks') == 'true'
         instance.remove_category_on_nohl_removal = request.form.get('remove_category_on_nohl_removal') == 'true'
         instance.nohl_removal_categories = request.form.get('nohl_removal_categories', '')
+        instance.nohl_skip_arr_import_blocked = request.form.get('nohl_skip_arr_import_blocked') == 'true'
         instance.pause_cross_seeded_torrents = request.form.get('pause_cross_seeded_torrents') == 'true'
         instance.tag_unregistered_torrents = request.form.get('tag_unregistered_torrents') == 'true'
         db.session.commit()
@@ -814,9 +816,18 @@ def restart():
         flash(f'Error restarting application: {e}', 'danger')
     return redirect(url_for('settings'))
 
+def ensure_instance_columns():
+    """Adds Instance columns introduced after the table was created (create_all doesn't alter tables)."""
+    from sqlalchemy import inspect, text
+    existing = {c['name'] for c in inspect(db.engine).get_columns('instance')}
+    if 'nohl_skip_arr_import_blocked' not in existing:
+        with db.engine.begin() as conn:
+            conn.execute(text('ALTER TABLE instance ADD COLUMN nohl_skip_arr_import_blocked BOOLEAN'))
+
 if __name__ == '__main__':
     with app.app_context():
         db.create_all()
+        ensure_instance_columns()
     
     settings = load_settings()
     from scheduler import run_all_jobs

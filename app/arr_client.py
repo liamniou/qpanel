@@ -42,6 +42,21 @@ def get_queue(arr):
     return records
 
 
+def find_import_blocked_hashes(arr):
+    """
+    Returns lowercase torrent hashes of completed downloads the arr hasn't imported yet
+    (importPending/importBlocked, e.g. "Manual Import required").
+    """
+    return {
+        record['downloadId'].lower()
+        for record in get_queue(arr)
+        if record.get('downloadId')
+        and record.get('protocol') == 'torrent'
+        and record.get('status') == 'completed'
+        and record.get('trackedDownloadState') in IMPORT_STUCK_STATES
+    }
+
+
 def find_cf_not_upgrade_downloads(arr):
     """
     Returns {torrent_hash_lowercase: title} for completed downloads that are stuck in the
