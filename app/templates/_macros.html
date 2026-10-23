@@ -52,3 +52,12 @@
     <span class="badge badge-outline">Unknown</span>
 {% endif %}
 {% endmacro %}
+
+{% macro rule_limits(rule) %}
+{% if rule.share_limit_ratio is not none %}<span class="badge badge-outline me-1">Ratio: {{ rule.share_limit_ratio }}</span>{% endif %}
+{% if rule.share_limit_time is not none %}<span class="badge badge-outline me-1">Time: {{ rule.share_limit_time }}m</span>{% endif %}
+{% if rule.max_upload_speed is not none %}<span class="badge badge-outline me-1">UL: {{ (rule.max_upload_speed / 1024)|round|int }}KiB/s</span>{% endif %}
+{% if rule.max_download_speed is not none %}<span class="badge badge-outline me-1">DL: {{ (rule.max_download_speed / 1024)|round|int }}KiB/s</span>{% endif %}
+{% if rule.stop_processing %}<span class="badge bg-warning me-1" title="Rules below are skipped for matching torrents"><i class="bi bi-sign-stop"></i>Stop</span>{% endif %}
+{% if rule.share_limit_ratio is none and rule.share_limit_time is none and rule.max_upload_speed is none and rule.max_download_speed is none and not rule.stop_processing %}<span class="text-muted">No limits set</span>{% endif %}
+{% endmacro %}

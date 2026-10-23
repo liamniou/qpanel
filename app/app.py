@@ -52,7 +52,9 @@ migrate = Migrate(app, db)
 # Association table for the many-to-many relationship between Instance and Rule
 instance_rules = db.Table('instance_rules',
     db.Column('instance_id', db.Integer, db.ForeignKey('instance.id'), primary_key=True),
-    db.Column('rule_id', db.Integer, db.ForeignKey('rule.id'), primary_key=True)
+    db.Column('rule_id', db.Integer, db.ForeignKey('rule.id'), primary_key=True),
+    # Evaluation order of the rule on this instance (ascending).
+    db.Column('position', db.Integer)
 )
 
 class Instance(db.Model):
@@ -62,7 +64,7 @@ class Instance(db.Model):
     username = db.Column(db.String(100))
     password = db.Column(db.String(100))
     rules = db.relationship('Rule', secondary=instance_rules, lazy='subquery',
-        order_by='Rule.priority',
+        order_by=[instance_rules.c.position, instance_rules.c.rule_id],
         backref=db.backref('instances', lazy=True))
     logs = db.relationship('ActionLog', backref='instance', lazy=True, cascade="all, delete-orphan")
     qbt_download_dir = db.Column(db.String(500))
@@ -90,8 +92,6 @@ class Rule(db.Model):
     share_limit_time = db.Column(db.Integer)  # in minutes
     max_upload_speed = db.Column(db.Integer)  # in bytes/s
     max_download_speed = db.Column(db.Integer)  # in bytes/s
-    # Rules are evaluated in ascending priority; every match applies, later ones override earlier limits.
-    priority = db.Column(db.Integer)
     # When this rule matches, rules after it are not evaluated for that torrent.
     stop_processing = db.Column(db.Boolean, default=False)
 
@@ -169,7 +169,10 @@ def assign_rule(instance_id):
     rule = Rule.query.get_or_404(rule_id)
     
     if rule not in instance.rules:
-        instance.rules.append(rule)
+        last = db.session.execute(
+            db.select(db.func.max(instance_rules.c.position)).where(instance_rules.c.instance_id == instance.id)
+        ).scalar() or 0
+        db.session.execute(instance_rules.insert().values(instance_id=instance.id, rule_id=rule.id, position=last + 1))
         db.session.commit()
         flash(f"Rule '{rule.name}' assigned to instance '{instance.name}' successfully!", 'success')
     else:
@@ -189,6 +192,28 @@ def remove_rule_from_instance(instance_id, rule_id):
     else:
         flash(f"Rule '{rule.name}' was not assigned to instance '{instance.name}'.", 'info')
 
+    return redirect(url_for('edit_instance', instance_id=instance.id, _anchor='rules'))
+
+@app.route('/instances/<int:instance_id>/rules/<int:rule_id>/move/<direction>', methods=['POST'])
+def move_instance_rule(instance_id, rule_id, direction):
+    instance = Instance.query.get_or_404(instance_id)
+    rule_ids = db.session.execute(
+        db.select(instance_rules.c.rule_id)
+        .where(instance_rules.c.instance_id == instance.id)
+        .order_by(instance_rules.c.position, instance_rules.c.rule_id)
+    ).scalars().all()
+    if rule_id in rule_ids and direction in ('up', 'down'):
+        index = rule_ids.index(rule_id)
+        target = index - 1 if direction == 'up' else index + 1
+        if 0 <= target < len(rule_ids):
+            rule_ids[index], rule_ids[target] = rule_ids[target], rule_ids[index]
+        for position, rid in enumerate(rule_ids, start=1):
+            db.session.execute(
+                instance_rules.update()
+                .where(instance_rules.c.instance_id == instance.id, instance_rules.c.rule_id == rid)
+                .values(position=position)
+            )
+        db.session.commit()
     return redirect(url_for('edit_instance', instance_id=instance.id, _anchor='rules'))
 
 LOGS_PER_PAGE = 100
@@ -770,10 +795,8 @@ def refresh_rule_options():
 @app.route('/rules', methods=['GET', 'POST'])
 def rules():
     if request.method == 'POST':
-        max_priority = db.session.query(db.func.max(Rule.priority)).scalar() or 0
         new_rule = Rule(
             name=request.form['name'],
-            priority=max_priority + 1,
             stop_processing=request.form.get('stop_processing') == 'true',
             condition_type=request.form['condition_type'],
             condition_value=request.form['condition_value'],
@@ -787,24 +810,8 @@ def rules():
         flash(f"Rule '{new_rule.name}' saved successfully!", 'success')
         return redirect(url_for('rules'))
     
-    rules = Rule.query.order_by(Rule.priority, Rule.id).all()
-    instances = Instance.query.all()
-    return render_template('rules.html', rules=rules, instances=instances)
-
-@app.route('/rules/<int:rule_id>/move/<direction>', methods=['POST'])
-def move_rule(rule_id, direction):
-    rules = Rule.query.order_by(Rule.priority, Rule.id).all()
-    index = next((i for i, r in enumerate(rules) if r.id == rule_id), None)
-    if index is None:
-        flash('Rule not found.', 'danger')
-        return redirect(url_for('rules'))
-    target = index - 1 if direction == 'up' else index + 1
-    if direction in ('up', 'down') and 0 <= target < len(rules):
-        rules[index], rules[target] = rules[target], rules[index]
-    for position, rule in enumerate(rules, start=1):
-        rule.priority = position
-    db.session.commit()
-    return redirect(url_for('rules', _anchor=f'rule-{rule_id}'))
+    rules = Rule.query.order_by(Rule.name).all()
+    return render_template('rules.html', rules=rules)
 
 @app.route('/rules/edit/<rule_id>', methods=['GET', 'POST'])
 def edit_rule(rule_id):
@@ -891,7 +898,8 @@ def ensure_schema():
     inspector = inspect(db.engine)
     added = {
         'instance': [('nohl_skip_arr_import_blocked', 'BOOLEAN')],
-        'rule': [('priority', 'INTEGER'), ('stop_processing', 'BOOLEAN')],
+        'rule': [('stop_processing', 'BOOLEAN')],
+        'instance_rules': [('position', 'INTEGER')],
     }
     with db.engine.begin() as conn:
         for table, columns in added.items():
@@ -899,15 +907,20 @@ def ensure_schema():
             for name, sql_type in columns:
                 if name not in existing:
                     conn.execute(text(f'ALTER TABLE {table} ADD COLUMN {name} {sql_type}'))
-        # Seed priorities from the order rules were assigned to instances (the previous evaluation order).
-        if conn.execute(text('SELECT COUNT(*) FROM rule WHERE priority IS NULL')).scalar():
-            ordered = conn.execute(text("""
-                SELECT r.id FROM rule r
-                LEFT JOIN (SELECT rule_id, MIN(rowid) AS first_seen FROM instance_rules GROUP BY rule_id) ir ON ir.rule_id = r.id
-                ORDER BY r.priority IS NULL, r.priority, ir.first_seen IS NULL, ir.first_seen, r.id
-            """)).scalars().all()
-            for position, rule_id in enumerate(ordered, start=1):
-                conn.execute(text('UPDATE rule SET priority = :p WHERE id = :id'), {'p': position, 'id': rule_id})
+        # Seed per-instance positions from the previous evaluation order: the old global rule.priority
+        # (if that column exists), otherwise the order rules were assigned in.
+        unpositioned = conn.execute(text('SELECT DISTINCT instance_id FROM instance_rules WHERE position IS NULL')).scalars().all()
+        if unpositioned:
+            has_priority = 'priority' in {c['name'] for c in inspector.get_columns('rule')}
+            order_by = 'r.priority IS NULL, r.priority, ir.rowid' if has_priority else 'ir.rowid'
+            for instance_id in unpositioned:
+                rule_ids = conn.execute(text(
+                    f'SELECT ir.rule_id FROM instance_rules ir JOIN rule r ON r.id = ir.rule_id '
+                    f'WHERE ir.instance_id = :i ORDER BY ir.position IS NULL, ir.position, {order_by}'
+                ), {'i': instance_id}).scalars().all()
+                for position, rule_id in enumerate(rule_ids, start=1):
+                    conn.execute(text('UPDATE instance_rules SET position = :p WHERE instance_id = :i AND rule_id = :r'),
+                                 {'p': position, 'i': instance_id, 'r': rule_id})
 
 if __name__ == '__main__':
     with app.app_context():

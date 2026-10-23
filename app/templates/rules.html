@@ -1,5 +1,5 @@
 {% extends "base.html" %}
-{% from "_macros.html" import page_header, switch_row %}
+{% from "_macros.html" import page_header, switch_row, rule_limits %}
 
 {% block title %}Rules - qPanel{% endblock %}
 
@@ -11,7 +11,7 @@
         <p>Loading qBittorrent data...</p>
     </div>
 
-    {% call page_header('Rules', 'Reusable seeding and speed limits. Assign them to instances on each instance\'s Rules section.') %}
+    {% call page_header('Rules', 'Reusable seeding and speed limits. Assign and order them in each instance\'s Rules section.') %}
         <small id="data-timestamp" class="text-muted align-self-center"></small>
         <button id="refresh-button" class="btn btn-outline-secondary" onclick="refreshRuleOptions()"><i class="bi bi-arrow-clockwise"></i>Refresh trackers &amp; tags</button>
     {% endcall %}
@@ -19,7 +19,7 @@
     <div class="card mb-4">
         <div class="card-header">
             <h3 class="card-title">Existing rules</h3>
-            <p class="card-description">Rules run top to bottom on every instance they are assigned to. Every matching rule applies and a later rule overrides limits set by an earlier one; a rule marked <span class="badge bg-warning">Stop</span> ends the chain for torrents it matches.</p>
+            <p class="card-description">Each instance runs its assigned rules top to bottom in its own order. Every matching rule applies and a later rule overrides limits set by an earlier one; a rule marked <span class="badge bg-warning">Stop</span> ends the chain for torrents it matches.</p>
         </div>
         <div class="card-body px-0 pb-2">
     {% if rules %}
@@ -27,9 +27,7 @@
                 <table class="table table-hover align-middle mb-0">
                     <thead>
                         <tr>
-                            <th style="width: 1%;">#</th>
-                            <th style="width: 15%;">Name</th>
-                            <th style="width: 10%;">Assigned To</th>
+                            <th style="width: 20%;">Name</th>
                             <th style="width: 35%; max-width: 300px;">Condition</th>
                             <th style="width: 20%;">Limits</th>
                             <th style="width: 10%;" class="text-end">Actions</th>
@@ -38,36 +36,9 @@
                     <tbody>
                         {% for rule in rules %}
                         <tr id="rule-{{ rule.id }}">
-                            <td class="text-nowrap">
-                                <span class="text-muted me-1">{{ loop.index }}</span>
-                                <form method="post" action="{{ url_for('move_rule', rule_id=rule.id, direction='up') }}" class="d-inline">
-                                    <button type="submit" class="btn btn-ghost btn-sm px-1" title="Move up" {% if loop.first %}disabled{% endif %}><i class="bi bi-arrow-up"></i></button>
-                                </form>
-                                <form method="post" action="{{ url_for('move_rule', rule_id=rule.id, direction='down') }}" class="d-inline">
-                                    <button type="submit" class="btn btn-ghost btn-sm px-1" title="Move down" {% if loop.last %}disabled{% endif %}><i class="bi bi-arrow-down"></i></button>
-                                </form>
-                            </td>
                             <td>{{ rule.name }}</td>
-                            <td>
-                                {% if rule.instances %}
-                                    {% for instance in rule.instances %}
-                                        <a class="badge badge-outline text-decoration-none" href="{{ url_for('edit_instance', instance_id=instance.id, _anchor='rules') }}">{{ instance.name }}</a>
-                                    {% endfor %}
-                                {% else %}
-                                    <span class="text-muted">Not assigned</span>
-                                {% endif %}
-                            </td>
                             <td style="max-width: 300px;">If <strong>{{ rule.condition_type }}</strong> is <code style="word-break: break-all; white-space: normal; display: inline-block;">{{ rule.condition_value }}</code></td>
-                            <td>
-                                {% if rule.share_limit_ratio is not none %}<span class="badge badge-outline me-1">Ratio: {{ rule.share_limit_ratio }}</span>{% endif %}
-                                {% if rule.share_limit_time is not none %}<span class="badge badge-outline me-1">Time: {{ rule.share_limit_time }}m</span>{% endif %}
-                                {% if rule.max_upload_speed is not none %}<span class="badge badge-outline me-1">UL: {{ (rule.max_upload_speed / 1024)|round|int }}KiB/s</span>{% endif %}
-                                {% if rule.max_download_speed is not none %}<span class="badge badge-outline me-1">DL: {{ (rule.max_download_speed / 1024)|round|int }}KiB/s</span>{% endif %}
-                                {% if rule.stop_processing %}<span class="badge bg-warning me-1" title="Rules below are skipped for matching torrents"><i class="bi bi-sign-stop"></i>Stop</span>{% endif %}
-                                {% if rule.share_limit_ratio is none and rule.share_limit_time is none and rule.max_upload_speed is none and rule.max_download_speed is none and not rule.stop_processing %}
-                                <span class="text-muted">No limits set</span>
-                                {% endif %}
-                            </td>
+                            <td>{{ rule_limits(rule) }}</td>
                             <td class="text-end">
                                 <a href="{{ url_for('edit_rule', rule_id=rule.id) }}" class="btn btn-outline-secondary btn-sm"><i class="bi bi-pencil"></i>Edit</a>
                                 <form action="{{ url_for('delete_rule', rule_id=rule.id) }}" method="POST" style="display:inline;" onsubmit="return confirm('Are you sure you want to delete this rule?');">
@@ -89,7 +60,7 @@
         <div class="card mb-3">
             <div class="card-header">
                 <h3 class="card-title">Add rule</h3>
-                <p class="card-description">Match torrents by tracker, tag or category, then set the limits to apply. New rules are added at the bottom of the order.</p>
+                <p class="card-description">Match torrents by tracker, tag or category, then set the limits to apply. Assigning it to an instance adds it at the bottom of that instance's order.</p>
             </div>
             <div class="card-body">
                 <div class="row">

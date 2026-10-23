@@ -198,7 +198,7 @@ def apply_rules_for_instance(instance, client, torrents):
     logger.info(f"Checking rules for instance: {instance.name}")
     logger.debug(f"Found {len(torrents)} torrents in '{instance.name}'.")
 
-    rules = sorted(instance.rules, key=lambda r: (r.priority is None, r.priority or 0, r.id))
+    rules = list(instance.rules)  # already in this instance's configured order
     if not rules:
         return
 
