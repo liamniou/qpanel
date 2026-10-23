@@ -1,179 +1,195 @@
 {% extends "base.html" %}
+{% from "_macros.html" import page_header, status_badge %}
 
 {% block title %}Instances - qPanel{% endblock %}
 
 {% block content %}
-    {% with messages = get_flashed_messages(with_categories=true) %}
-        {% if messages %}
-            {% for category, message in messages %}
-                <div class="alert alert-{{ category }}">{{ message }}</div>
-            {% endfor %}
+    {% call page_header('Instances', 'qBittorrent clients managed by qPanel, and the Sonarr/Radarr instances it talks to.') %}
+        <a href="{{ url_for('new_instance') }}" class="btn btn-primary"><i class="bi bi-plus-lg"></i>Add instance</a>
+    {% endcall %}
+
+    {% set automation_labels = [('tag_nohardlinks', 'noHL'), ('pause_cross_seeded_torrents', 'Cross-seed pause'),
+                                ('tag_unregistered_torrents', 'Unregistered'), ('orphaned_scan_enabled', 'Orphan scan')] %}
+
+    <div class="card mb-4">
+        <div class="card-header">
+            <h3 class="card-title">qBittorrent</h3>
+            <p class="card-description">Open an instance to edit its connection, automations and rules.</p>
+        </div>
+        <div class="card-body px-0 pb-2">
+        {% if configs %}
+            <div class="table-responsive">
+                <table class="table table-hover align-middle">
+                    <thead>
+                        <tr><th>Name</th><th>Status</th><th>Host</th><th>Automations</th><th>Rules</th><th class="text-end"></th></tr>
+                    </thead>
+                    <tbody>
+                        {% for config in configs %}
+                        <tr>
+                            <td><a href="{{ url_for('edit_instance', instance_id=config.id) }}" class="fw-medium text-decoration-none">{{ config.name }}</a></td>
+                            <td class="text-nowrap">{{ status_badge(instance_statuses[config.id]) }}</td>
+                            <td><code>{{ config.host }}</code></td>
+                            <td>
+                                <div class="chip-row">
+                                {% for field, label in automation_labels if config[field] %}
+                                    <span class="badge badge-outline">{{ label }}</span>
+                                {% else %}
+                                    <span class="text-muted">—</span>
+                                {% endfor %}
+                                </div>
+                            </td>
+                            <td>{{ config.rules|length }}</td>
+                            <td class="text-end">
+                                <a href="{{ url_for('edit_instance', instance_id=config.id) }}" class="btn btn-outline-secondary btn-sm"><i class="bi bi-pencil"></i>Edit</a>
+                            </td>
+                        </tr>
+                        {% endfor %}
+                    </tbody>
+                </table>
+            </div>
+        {% else %}
+            <div class="empty-state"><i class="bi bi-hdd-stack"></i>No instances yet. <a href="{{ url_for('new_instance') }}">Add your first qBittorrent instance</a>.</div>
         {% endif %}
-    {% endwith %}
-
-    <h2 class="mb-4">Add New Instance</h2>
-    <form method="post" action="{{ url_for('instances') }}" class="mb-3">
-        <div class="row">
-            <!-- Connection Details -->
-            <div class="col-md-6 mb-4">
-                <div class="card h-100">
-                    <div class="card-header">
-                        <h4>Connection Details</h4>
-                    </div>
-                    <div class="card-body">
-                        <div class="form-group mb-3">
-                            <label for="name" class="form-label">Instance Name</label>
-                            <input type="text" class="form-control" id="name" name="name" required>
-                        </div>
-                        <div class="form-group mb-3">
-                            <label for="host" class="form-label">Host</label>
-                            <input type="text" class="form-control" id="host" name="host" required placeholder="e.g., http://192.168.1.10:8080">
-                        </div>
-                        <div class="form-group mb-3">
-                            <label for="username" class="form-label">Username</label>
-                            <input type="text" class="form-control" id="username" name="username">
-                        </div>
-                        <div class="form-group">
-                            <label for="password" class="form-label">Password</label>
-                            <input type="password" class="form-control" id="password" name="password">
-                        </div>
-                    </div>
-                </div>
-            </div>
-
-            <!-- Hard Links Detection -->
-            <div class="col-md-6 mb-4">
-                <div class="card h-100">
-                    <div class="card-header">
-                        <h4>Hard Links Detection</h4>
-                    </div>
-                    <div class="card-body">
-                        <div class="form-check form-switch mb-3">
-                            <input class="form-check-input" type="checkbox" id="tag_nohardlinks" name="tag_nohardlinks" value="true">
-                            <label class="form-check-label" for="tag_nohardlinks">Tag torrents that don't have hard links</label>
-                            <small class="form-text text-muted d-block">If enabled, adds the 'noHL' tag to torrents which files exist only in the qBittorrent download directory. In order for this to work, you need to set the mappings below.</small>
-                        </div>
-                        <div id="hardlinks_fields" style="display: none;">
-                            <hr>
-                            <div class="form-group mb-3">
-                                <label for="qbt_download_dir" class="form-label">qBittorrent Download Directory</label>
-                                <input type="text" class="form-control" id="qbt_download_dir" name="qbt_download_dir" placeholder="e.g., /downloads">
-                                <small class="form-text text-muted">The absolute path where qBittorrent saves its downloads.</small>
-                            </div>
-                            <div class="form-group">
-                                <label for="mapped_download_dir" class="form-label">Mapped Download Directory</label>
-                                <input type="text" class="form-control" id="mapped_download_dir" name="mapped_download_dir" placeholder="e.g., /data/torrents">
-                                <small class="form-text text-muted">The same absolute path from the perspective of qPanel.</small>
-                            </div>
-                        </div>
-                    </div>
-                </div>
-            </div>
-        </div>
-
-        <!-- Automation Settings -->
-        <div class="row">
-            <div class="col-12 mb-4">
-                <div class="card">
-                    <div class="card-header">
-                        <h4>Automation Settings</h4>
-                    </div>
-                    <div class="card-body">
-                        <div class="form-check form-switch">
-                            <input class="form-check-input" type="checkbox" id="pause_cross_seeded_torrents" name="pause_cross_seeded_torrents" value="true">
-                            <label class="form-check-label" for="pause_cross_seeded_torrents">Pause Cross-Seeded Torrents</label>
-                            <small class="form-text text-muted d-block">If enabled, the application will pause torrents that have the same name as a torrent that is already paused.</small>
-                        </div>
-                        <div class="form-check form-switch">
-                            <input class="form-check-input" type="checkbox" id="tag_unregistered_torrents" name="tag_unregistered_torrents" value="true">
-                            <label class="form-check-label" for="tag_unregistered_torrents">Tag Unregistered Torrents</label>
-                            <small class="form-text text-muted d-block">If enabled, the application will tag torrents with "unregistered" if their tracker status indicates they are no longer registered.</small>
-                        </div>
-                    </div>
-                </div>
-            </div>
-        </div>
-        
-        <div class="mt-0">
-            <button type="submit" class="btn btn-primary">Add Instance</button>
-        </div>
-    </form>
-
-    <hr class="my-3">
-
-    <h2 class="mb-4">Existing Instances</h2>
-    {% if configs %}
-    <div class="card">
-        <div class="table-responsive">
-            <table class="table table-hover align-middle mb-0">
-                <thead>
-                    <tr>
-                        <th style="width: 20%;">Name</th>
-                        <th style="width: 15%;">Status</th>
-                        <th>Host</th>
-                        <th style="width: 15%;">Rules</th>
-                        <th style="width: 15%;" class="text-end">Actions</th>
-                    </tr>
-                </thead>
-                <tbody>
-                    {% for config in configs %}
-                    <tr>
-                        <td>{{ config.name }}</td>
-                        <td>
-                            {% set status = instance_statuses[config.id] %}
-                            {% if status.status == 'Online' %}
-                                <span class="badge bg-success">Online</span>
-                                <span class="badge bg-info fw-normal">{{ status.version }}</span>
-                            {% else %}
-                                <span class="badge bg-danger">Offline</span>
-                            {% endif %}
-                        </td>
-                        <td><code>{{ config.host }}</code></td>
-                        <td>
-                            {% if config.rules %}
-                                <span class="badge bg-primary fw-normal">{{ config.rules|length }} assigned</span>
-                            {% else %}
-                                <span class="badge bg-secondary fw-normal">None</span>
-                            {% endif %}
-                        </td>
-                        <td class="text-end">
-                            <a href="{{ url_for('edit_instance', instance_id=config.id) }}" class="btn btn-primary btn-sm">Edit</a>
-                            <form action="{{ url_for('delete_instance', instance_id=config.id) }}" method="POST" style="display:inline;" onsubmit="return confirm('Are you sure you want to delete this instance?');">
-                                <button type="submit" class="btn btn-danger btn-sm">Delete</button>
-                            </form>
-                        </td>
-                    </tr>
-                    {% endfor %}
-                </tbody>
-            </table>
         </div>
     </div>
-    {% else %}
-        <p>No instances have been added yet.</p>
-    {% endif %}
-</div>
 
+    <div class="card" id="arr">
+        <div class="card-header">
+            <h3 class="card-title">Sonarr / Radarr</h3>
+            <p class="card-description">Used to keep downloads awaiting import out of noHL tagging, and to clear categories of "Not a Custom Format upgrade" downloads.</p>
+        </div>
+        <div class="card-body">
+            {% if arr_instances %}
+            <div class="table-responsive mb-4">
+                <table class="table table-hover align-middle">
+                    <thead>
+                        <tr><th>Name</th><th>Type</th><th>URL</th><th>Clear category on CF reject</th><th class="text-end"></th></tr>
+                    </thead>
+                    <tbody>
+                        {% for arr in arr_instances %}
+                        <tr>
+                            <td class="fw-medium">{{ arr.name }}</td>
+                            <td><span class="badge badge-outline">{{ arr.arr_type|capitalize }}</span></td>
+                            <td><code>{{ arr.url }}</code></td>
+                            <td>
+                                {% if arr.remove_category_on_cf_not_upgrade %}<span class="badge bg-success">Enabled</span>{% else %}<span class="badge bg-secondary">Disabled</span>{% endif %}
+                            </td>
+                            <td class="text-end text-nowrap">
+                                <button type="button" class="btn btn-outline-secondary btn-sm" id="test-arr-{{ arr.id }}-btn" onclick="testArr({{ arr.id }})">Test</button>
+                                <button type="button" class="btn btn-outline-secondary btn-sm"
+                                        data-arr-id="{{ arr.id }}" data-arr-name="{{ arr.name }}" data-arr-type="{{ arr.arr_type }}"
+                                        data-arr-url="{{ arr.url }}" data-arr-cf="{{ 'true' if arr.remove_category_on_cf_not_upgrade else 'false' }}"
+                                        data-action="{{ url_for('edit_arr_instance', arr_id=arr.id) }}"
+                                        onclick="editArr(this)"><i class="bi bi-pencil"></i>Edit</button>
+                                <form method="post" action="{{ url_for('delete_arr_instance', arr_id=arr.id) }}" class="d-inline" onsubmit='return confirm({{ ("Delete " ~ arr.name ~ "?")|tojson }});'>
+                                    <button type="submit" class="btn btn-ghost btn-sm" title="Delete"><i class="bi bi-trash"></i></button>
+                                </form>
+                            </td>
+                        </tr>
+                        {% endfor %}
+                    </tbody>
+                </table>
+            </div>
+            {% else %}
+            <p class="text-muted">No Sonarr/Radarr instances configured.</p>
+            {% endif %}
+
+            <h4 class="fs-6 fw-semibold mb-3" id="arr-form-title">Add Sonarr / Radarr</h4>
+            <form method="post" id="arr-form" action="{{ url_for('add_arr_instance') }}" data-add-action="{{ url_for('add_arr_instance') }}">
+                <div class="row g-3">
+                    <div class="col-md-3">
+                        <label for="arr_name" class="form-label">Name</label>
+                        <input type="text" class="form-control" id="arr_name" name="name" placeholder="Sonarr" required>
+                    </div>
+                    <div class="col-md-2">
+                        <label for="arr_type" class="form-label">Type</label>
+                        <select class="form-select" id="arr_type" name="arr_type">
+                            <option value="sonarr">Sonarr</option>
+                            <option value="radarr">Radarr</option>
+                        </select>
+                    </div>
+                    <div class="col-md-4">
+                        <label for="arr_url" class="form-label">URL</label>
+                        <input type="url" class="form-control" id="arr_url" name="url" placeholder="http://192.168.0.237:8989" required>
+                    </div>
+                    <div class="col-md-3">
+                        <label for="arr_api_key" class="form-label">API key</label>
+                        <input type="password" class="form-control" id="arr_api_key" name="api_key" autocomplete="new-password" required>
+                    </div>
+                </div>
+                <label class="setting-row mt-3" for="arr_cf">
+                    <div>
+                        <div class="title">Remove qBittorrent category for "Not a Custom Format upgrade" downloads</div>
+                        <div class="desc">Completed downloads this instance refuses to import only because they don't improve on existing files' custom formats get their category cleared, so they leave the queue and keep seeding. Other import errors are left alone.</div>
+                    </div>
+                    <div class="form-check form-switch"><input class="form-check-input" type="checkbox" role="switch" id="arr_cf" name="remove_category_on_cf_not_upgrade" value="true"></div>
+                </label>
+                <div class="mt-3 d-flex gap-2">
+                    <button type="submit" class="btn btn-primary" id="arr-submit-btn"><i class="bi bi-plus-lg"></i>Add</button>
+                    <button type="button" class="btn btn-outline-secondary d-none" id="arr-cancel-btn" onclick="resetArrForm()">Cancel</button>
+                </div>
+            </form>
+        </div>
+    </div>
+{% endblock %}
+
+{% block scripts %}
 <script>
-    document.addEventListener('DOMContentLoaded', function() {
-        const tagNoHardlinksCheckbox = document.getElementById('tag_nohardlinks');
-        const hardlinksFields = document.getElementById('hardlinks_fields');
-        const qbtDownloadDirInput = document.getElementById('qbt_download_dir');
-        const mappedDownloadDirInput = document.getElementById('mapped_download_dir');
+    function editArr(btn) {
+        const form = document.getElementById('arr-form');
+        form.action = btn.dataset.action;
+        document.getElementById('arr_name').value = btn.dataset.arrName;
+        document.getElementById('arr_type').value = btn.dataset.arrType;
+        document.getElementById('arr_url').value = btn.dataset.arrUrl;
+        const apiKey = document.getElementById('arr_api_key');
+        apiKey.value = '';
+        apiKey.required = false;
+        apiKey.placeholder = 'Leave blank to keep current key';
+        document.getElementById('arr_cf').checked = btn.dataset.arrCf === 'true';
+        document.getElementById('arr-form-title').textContent = `Edit ${btn.dataset.arrName}`;
+        document.getElementById('arr-submit-btn').innerHTML = '<i class="bi bi-check2"></i>Save';
+        document.getElementById('arr-cancel-btn').classList.remove('d-none');
+        form.scrollIntoView({ behavior: 'smooth', block: 'center' });
+    }
 
-        function toggleHardlinksFields() {
-            if (tagNoHardlinksCheckbox.checked) {
-                hardlinksFields.style.display = 'block';
-                qbtDownloadDirInput.setAttribute('required', 'required');
-                mappedDownloadDirInput.setAttribute('required', 'required');
-            } else {
-                hardlinksFields.style.display = 'none';
-                qbtDownloadDirInput.removeAttribute('required');
-                mappedDownloadDirInput.removeAttribute('required');
-            }
-        }
+    function resetArrForm() {
+        const form = document.getElementById('arr-form');
+        form.reset();
+        form.action = form.dataset.addAction;
+        const apiKey = document.getElementById('arr_api_key');
+        apiKey.required = true;
+        apiKey.placeholder = '';
+        document.getElementById('arr-form-title').textContent = 'Add Sonarr / Radarr';
+        document.getElementById('arr-submit-btn').innerHTML = '<i class="bi bi-plus-lg"></i>Add';
+        document.getElementById('arr-cancel-btn').classList.add('d-none');
+    }
 
-        tagNoHardlinksCheckbox.addEventListener('change', toggleHardlinksFields);
-        toggleHardlinksFields(); // Run on page load
-    });
+    function testArr(id) {
+        const btn = document.getElementById(`test-arr-${id}-btn`);
+        const originalText = btn.innerHTML;
+        btn.disabled = true;
+        btn.innerHTML = '<span class="spinner-border spinner-border-sm" role="status"></span>';
+        fetch(`/api/test-arr/${id}`, { method: 'POST' })
+            .then(response => response.json())
+            .then(data => {
+                const ok = data.status === 'success';
+                btn.innerHTML = ok ? data.message : 'Failed';
+                btn.classList.replace('btn-outline-secondary', ok ? 'btn-success' : 'btn-outline-danger');
+                if (!ok) alert(data.message);
+            })
+            .catch(error => {
+                btn.innerHTML = 'Error';
+                btn.classList.replace('btn-outline-secondary', 'btn-outline-danger');
+                alert('Network error: ' + error);
+            })
+            .finally(() => {
+                btn.disabled = false;
+                setTimeout(() => {
+                    btn.innerHTML = originalText;
+                    btn.classList.remove('btn-success', 'btn-outline-danger');
+                    btn.classList.add('btn-outline-secondary');
+                }, 3000);
+            });
+    }
 </script>
-{% endblock %} 
+{% endblock %}

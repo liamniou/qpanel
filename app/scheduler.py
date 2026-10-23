@@ -1,4 +1,4 @@
-from app import app, db, Instance, ActionLog, OrphanedFile, ArrInstance
+from app import app, db, Instance, ActionLog, OrphanedFile, ArrInstance, record_instance_status
 from qbt_client import get_client, get_all_torrents
 from flask import flash
 import logging
@@ -37,16 +37,21 @@ def run_all_jobs():
             try:
                 client = get_client(instance)
                 if client:
+                    # app_version() raises when unreachable; get_all_torrents() would just return [].
+                    version = client.app_version()
                     torrents = get_all_torrents(client)
                     instance_cache[instance.id] = {
                         'client': client,
                         'torrents': torrents,
                         'instance': instance
                     }
+                    record_instance_status(instance.id, {'status': 'Online', 'version': version})
                     logger.info(f"Fetched {len(torrents)} torrents from '{instance.name}'")
                 else:
+                    record_instance_status(instance.id, {'status': 'Offline', 'error': 'Could not connect.'})
                     logger.warning(f"Could not connect to instance '{instance.name}'")
             except Exception as e:
+                record_instance_status(instance.id, {'status': 'Offline', 'error': str(e)})
                 logger.error(f"Error fetching torrents from '{instance.name}': {e}")
         
         # Phase 2: Run tag_unregistered_torrents

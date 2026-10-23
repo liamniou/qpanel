@@ -1,279 +1,117 @@
 {% extends "base.html" %}
+{% from "_macros.html" import page_header, section_nav, switch_row %}
 
 {% block title %}Settings - qPanel{% endblock %}
 
 {% block content %}
-    {% with messages = get_flashed_messages(with_categories=true) %}
-        {% if messages %}
-            {% for category, message in messages %}
-                <div class="alert alert-{{ category }}">{{ message }}</div>
-            {% endfor %}
-        {% endif %}
-    {% endwith %}
+    {{ page_header('Settings', 'Application-wide preferences. Per-instance automations live on each instance page.') }}
 
-    <h2 class="mb-4">Application Settings</h2>
-    
-    <form method="post" action="{{ url_for('settings') }}">
-        <div class="row">
-            <!-- General Settings -->
-            <div class="col-md-6 mb-4">
-                <div class="card h-100">
-                    <div class="card-header">
-                        <h4>General Settings</h4>
-                    </div>
-                    <div class="card-body">
-                        <div class="form-group mb-3">
-                            <label for="scheduler_interval_minutes" class="form-label">Rule Polling Interval (minutes)</label>
-                            <input type="number" class="form-control" id="scheduler_interval_minutes" name="scheduler_interval_minutes" value="{{ settings.scheduler_interval_minutes }}" min="1" required>
-                            <small class="form-text text-muted">How often to check and apply rules. Restart required.</small>
-                        </div>
-                        <div class="form-group">
-                            <label for="cache_duration_minutes" class="form-label">Cache TTL (minutes)</label>
-                            <input type="number" class="form-control" id="cache_duration_minutes" name="cache_duration_minutes" value="{{ settings.cache_duration_minutes }}" min="1" required>
-                            <small class="form-text text-muted">How long to cache the list of trackers and tags.</small>
-                        </div>
-                    </div>
-                </div>
-            </div>
+    {% set groups = [('Application', [('general', 'General', 'bi-sliders2'), ('notifications', 'Notifications', 'bi-bell')]),
+                     ('System', [('danger', 'Danger zone', 'bi-exclamation-triangle')])] %}
+    <div class="sectioned" data-sectioned="general">
+        {{ section_nav(groups, 'Settings') }}
 
-            <!-- Notifications -->
-            <div class="col-md-6 mb-4">
-                <div class="card h-100">
-                    <div class="card-header">
-                        <h4>Notifications</h4>
-                    </div>
-                    <div class="card-body">
-                        <!-- Telegram -->
-                        <div class="form-check form-switch mb-3">
-                            <input class="form-check-input" type="checkbox" id="telegram_notification_enabled" name="telegram_notification_enabled" {% if settings.telegram_notification_enabled %}checked{% endif %}>
-                            <label class="form-check-label" for="telegram_notification_enabled">Enable Telegram Notifications</label>
+        <div class="section-content">
+            <form method="post" action="{{ url_for('settings') }}" id="settings-form">
+                <section data-section-panel="general">
+                    <div class="card">
+                        <div class="card-header">
+                            <h3 class="card-title">General</h3>
+                            <p class="card-description">Scheduler and caching.</p>
                         </div>
-                        <div id="telegram_fields" style="{% if not settings.telegram_notification_enabled %}display: none;{% endif %}">
-                            <div class="form-group mb-3">
-                                <label for="telegram_bot_token" class="form-label">Telegram Bot Token</label>
-                                <input type="password" class="form-control" id="telegram_bot_token" name="telegram_bot_token" value="{{ settings.telegram_bot_token }}" placeholder="Token is hidden for security">
+                        <div class="card-body">
+                            <div class="row g-3">
+                                <div class="col-md-6">
+                                    <label for="scheduler_interval_minutes" class="form-label">Scheduler interval (minutes)</label>
+                                    <input type="number" class="form-control" id="scheduler_interval_minutes" name="scheduler_interval_minutes" value="{{ settings.scheduler_interval_minutes }}" min="1" required>
+                                    <div class="form-text">How often automations and rules run. Restart required.</div>
+                                </div>
+                                <div class="col-md-6">
+                                    <label for="cache_duration_minutes" class="form-label">Cache TTL (minutes)</label>
+                                    <input type="number" class="form-control" id="cache_duration_minutes" name="cache_duration_minutes" value="{{ settings.cache_duration_minutes }}" min="1" required>
+                                    <div class="form-text">How long the list of trackers and tags is cached for the rule editor.</div>
+                                </div>
                             </div>
-                            <div class="form-group mb-3">
-                                <label for="telegram_chat_id" class="form-label">Telegram Chat ID</label>
-                                <input type="text" class="form-control" id="telegram_chat_id" name="telegram_chat_id" value="{{ settings.telegram_chat_id }}">
+                        </div>
+                    </div>
+                </section>
+
+                <section data-section-panel="notifications">
+                    <div class="card">
+                        <div class="card-header">
+                            <h3 class="card-title">Notifications</h3>
+                            <p class="card-description">Where qPanel reports tagged and paused torrents.</p>
+                        </div>
+                        <div class="card-body">
+                            {{ switch_row('telegram_notification_enabled', 'Telegram', 'Send notifications to a Telegram chat.', settings.telegram_notification_enabled, value='on') }}
+                            <div class="setting-sub" data-depends-on="telegram_notification_enabled">
+                                <div class="row g-3">
+                                    <div class="col-md-6">
+                                        <label for="telegram_bot_token" class="form-label">Bot token</label>
+                                        <input type="password" class="form-control" id="telegram_bot_token" name="telegram_bot_token" placeholder="Leave blank to keep current token" autocomplete="new-password">
+                                    </div>
+                                    <div class="col-md-6">
+                                        <label for="telegram_chat_id" class="form-label">Chat ID</label>
+                                        <input type="text" class="form-control" id="telegram_chat_id" name="telegram_chat_id" value="{{ settings.telegram_chat_id }}">
+                                    </div>
+                                </div>
+                                <button type="button" class="btn btn-outline-secondary btn-sm" id="test-telegram-btn" onclick="testNotification('telegram')"><i class="bi bi-send"></i>Send test</button>
                             </div>
-                            <button type="button" class="btn btn-sm btn-outline-secondary" id="test-telegram-btn" onclick="testNotification('telegram')">
-                                <i class="bi bi-send"></i> Test Telegram
-                            </button>
-                        </div>
-                        <hr>
-                        <!-- Discord -->
-                        <div class="form-check form-switch mb-3">
-                            <input class="form-check-input" type="checkbox" id="discord_notification_enabled" name="discord_notification_enabled" {% if settings.discord_notification_enabled %}checked{% endif %}>
-                            <label class="form-check-label" for="discord_notification_enabled">Enable Discord Notifications</label>
-                        </div>
-                        <div id="discord_fields" style="{% if not settings.discord_notification_enabled %}display: none;{% endif %}">
-                            <div class="form-group mb-3">
-                                <label for="discord_webhook_url" class="form-label">Discord Webhook URL</label>
-                                <input type="text" class="form-control" id="discord_webhook_url" name="discord_webhook_url" value="{{ settings.discord_webhook_url }}" placeholder="https://discord.com/api/webhooks/...">
+                            {{ switch_row('discord_notification_enabled', 'Discord', 'Post notifications to a Discord webhook.', settings.discord_notification_enabled, value='on') }}
+                            <div class="setting-sub" data-depends-on="discord_notification_enabled">
+                                <div>
+                                    <label for="discord_webhook_url" class="form-label">Webhook URL</label>
+                                    <input type="password" class="form-control" id="discord_webhook_url" name="discord_webhook_url" placeholder="Leave blank to keep current webhook" autocomplete="new-password">
+                                </div>
+                                <button type="button" class="btn btn-outline-secondary btn-sm" id="test-discord-btn" onclick="testNotification('discord')"><i class="bi bi-send"></i>Send test</button>
                             </div>
-                            <button type="button" class="btn btn-sm btn-outline-secondary" id="test-discord-btn" onclick="testNotification('discord')">
-                                <i class="bi bi-send"></i> Test Discord
-                            </button>
                         </div>
                     </div>
-                </div>
-            </div>
-        </div>
-        <div class="mt-0">
-            <button type="submit" class="btn btn-primary">Save Settings</button>
-        </div>
-    </form>
+                </section>
 
-    <hr class="my-3">
-
-    <div class="card mb-4">
-        <div class="card-header">
-            <h4>Sonarr / Radarr</h4>
-        </div>
-        <div class="card-body">
-            {% if arr_instances %}
-            <div class="table-responsive mb-3">
-                <table class="table table-hover align-middle mb-0">
-                    <thead>
-                        <tr>
-                            <th>Name</th>
-                            <th>Type</th>
-                            <th>URL</th>
-                            <th>Clear category on CF reject</th>
-                            <th class="text-end">Actions</th>
-                        </tr>
-                    </thead>
-                    <tbody>
-                        {% for arr in arr_instances %}
-                        <tr>
-                            <td>{{ arr.name }}</td>
-                            <td>{{ arr.arr_type|capitalize }}</td>
-                            <td><code>{{ arr.url }}</code></td>
-                            <td>
-                                {% if arr.remove_category_on_cf_not_upgrade %}
-                                <span class="badge bg-success">Enabled</span>
-                                {% else %}
-                                <span class="badge bg-secondary">Disabled</span>
-                                {% endif %}
-                            </td>
-                            <td class="text-end text-nowrap">
-                                <button type="button" class="btn btn-sm btn-outline-secondary" id="test-arr-{{ arr.id }}-btn" onclick="testArr({{ arr.id }})">Test</button>
-                                <button type="button" class="btn btn-sm btn-primary"
-                                        data-arr-id="{{ arr.id }}" data-arr-name="{{ arr.name }}" data-arr-type="{{ arr.arr_type }}"
-                                        data-arr-url="{{ arr.url }}" data-arr-cf="{{ 'true' if arr.remove_category_on_cf_not_upgrade else 'false' }}"
-                                        onclick="editArr(this)">Edit</button>
-                                <form method="post" action="{{ url_for('delete_arr_instance', arr_id=arr.id) }}" class="d-inline" onsubmit="return confirm('Delete {{ arr.name }}?');">
-                                    <button type="submit" class="btn btn-sm btn-danger">Delete</button>
-                                </form>
-                            </td>
-                        </tr>
-                        {% endfor %}
-                    </tbody>
-                </table>
-            </div>
-            {% else %}
-            <p class="text-muted">No Sonarr/Radarr instances configured.</p>
-            {% endif %}
-
-            <h5 id="arr-form-title">Add Instance</h5>
-            <form method="post" id="arr-form" action="{{ url_for('add_arr_instance') }}" data-add-action="{{ url_for('add_arr_instance') }}">
-                <div class="row g-3">
-                    <div class="col-md-3">
-                        <label for="arr_name" class="form-label">Name</label>
-                        <input type="text" class="form-control" id="arr_name" name="name" placeholder="Sonarr" required>
-                    </div>
-                    <div class="col-md-2">
-                        <label for="arr_type" class="form-label">Type</label>
-                        <select class="form-select" id="arr_type" name="arr_type">
-                            <option value="sonarr">Sonarr</option>
-                            <option value="radarr">Radarr</option>
-                        </select>
-                    </div>
-                    <div class="col-md-4">
-                        <label for="arr_url" class="form-label">URL</label>
-                        <input type="url" class="form-control" id="arr_url" name="url" placeholder="http://192.168.0.237:8989" required>
-                    </div>
-                    <div class="col-md-3">
-                        <label for="arr_api_key" class="form-label">API Key</label>
-                        <input type="password" class="form-control" id="arr_api_key" name="api_key" autocomplete="new-password" required>
-                    </div>
-                </div>
-                <div class="form-check form-switch mt-3">
-                    <input class="form-check-input" type="checkbox" id="arr_cf" name="remove_category_on_cf_not_upgrade" value="true">
-                    <label class="form-check-label" for="arr_cf">Remove qBittorrent category for "Not a Custom Format upgrade" downloads</label>
-                    <small class="form-text text-muted d-block">Completed downloads that this instance refuses to import only because they don't improve on existing files' custom formats get their category cleared, so they leave the queue and keep seeding. Downloads with other import errors are left alone.</small>
-                </div>
-                <div class="mt-3">
-                    <button type="submit" class="btn btn-primary" id="arr-submit-btn">Add</button>
-                    <button type="button" class="btn btn-secondary d-none" id="arr-cancel-btn" onclick="resetArrForm()">Cancel</button>
+                <div class="save-bar" id="settings-save-bar">
+                    <button type="submit" class="btn btn-primary"><i class="bi bi-check2"></i>Save settings</button>
                 </div>
             </form>
+
+            <section data-section-panel="danger">
+                <div class="card border-destructive">
+                    <div class="card-header">
+                        <h3 class="card-title">Danger zone</h3>
+                        <p class="card-description">Irreversible or disruptive actions.</p>
+                    </div>
+                    <div class="card-body">
+                        <div class="setting-row">
+                            <div>
+                                <div class="title">Restart application</div>
+                                <div class="desc">Restarts qPanel, e.g. to apply a new scheduler interval.</div>
+                            </div>
+                            <form method="post" action="{{ url_for('restart') }}" onsubmit="return confirm('Restart the application?');">
+                                <button type="submit" class="btn btn-warning btn-sm"><i class="bi bi-arrow-clockwise"></i>Restart</button>
+                            </form>
+                        </div>
+                        <div class="setting-row">
+                            <div>
+                                <div class="title">Remove database</div>
+                                <div class="desc">Permanently deletes all instances, rules and logs.</div>
+                            </div>
+                            <form method="post" action="{{ url_for('remove_db') }}" onsubmit="return confirm('Completely remove the database? This cannot be undone.');">
+                                <button type="submit" class="btn btn-danger btn-sm"><i class="bi bi-trash"></i>Delete database</button>
+                            </form>
+                        </div>
+                    </div>
+                </div>
+            </section>
         </div>
     </div>
+{% endblock %}
 
-    <div class="card border-danger">
-        <div class="card-header bg-danger text-white">
-            <h3>Danger Zone</h3>
-        </div>
-        <div class="card-body">
-            <div class="d-flex justify-content-between align-items-center mb-3">
-                <div>
-                    <h5>Restart Application</h5>
-                    <p class="mb-0 text-muted">This will restart the entire application.</p>
-                </div>
-                <form method="post" action="{{ url_for('restart') }}" onsubmit="return confirm('Are you sure you want to restart the application?');" class="d-inline">
-                    <button type="submit" class="btn btn-warning">Restart</button>
-                </form>    
-            </div>
-            <hr class="my-3">
-            <div class="d-flex justify-content-between align-items-center">
-                <div>
-                    <h5>Remove Database</h5>
-                    <p class="mb-0 text-muted">This will permanently delete all your instances, rules, and logs.</p>
-                </div>
-                <form method="post" action="{{ url_for('remove_db') }}" onsubmit="return confirm('Are you sure you want to completely remove the database? This action is irreversible.');" class="d-inline">
-                    <button type="submit" class="btn btn-danger">Delete Database</button>
-                </form>    
-            </div>
-        </div>
-    </div>
-
+{% block scripts %}
     <script>
-        document.addEventListener('DOMContentLoaded', function() {
-            // Telegram toggle
-            const telegramToggle = document.getElementById('telegram_notification_enabled');
-            const telegramFields = document.getElementById('telegram_fields');
-            
-            telegramToggle.addEventListener('change', function() {
-                telegramFields.style.display = this.checked ? 'block' : 'none';
-            });
-
-            // Discord toggle
-            const discordToggle = document.getElementById('discord_notification_enabled');
-            const discordFields = document.getElementById('discord_fields');
-            
-            discordToggle.addEventListener('change', function() {
-                discordFields.style.display = this.checked ? 'block' : 'none';
-            });
+        document.querySelector('[data-sectioned]').addEventListener('section:change', function (e) {
+            document.getElementById('settings-save-bar').style.display = e.detail === 'danger' ? 'none' : '';
         });
-
-        function editArr(btn) {
-            const form = document.getElementById('arr-form');
-            form.action = `/settings/arr/${btn.dataset.arrId}`;
-            document.getElementById('arr_name').value = btn.dataset.arrName;
-            document.getElementById('arr_type').value = btn.dataset.arrType;
-            document.getElementById('arr_url').value = btn.dataset.arrUrl;
-            const apiKey = document.getElementById('arr_api_key');
-            apiKey.value = '';
-            apiKey.required = false;
-            apiKey.placeholder = 'Leave blank to keep current key';
-            document.getElementById('arr_cf').checked = btn.dataset.arrCf === 'true';
-            document.getElementById('arr-form-title').textContent = `Edit ${btn.dataset.arrName}`;
-            document.getElementById('arr-submit-btn').textContent = 'Save';
-            document.getElementById('arr-cancel-btn').classList.remove('d-none');
-            form.scrollIntoView({ behavior: 'smooth' });
-        }
-
-        function resetArrForm() {
-            const form = document.getElementById('arr-form');
-            form.reset();
-            form.action = form.dataset.addAction;
-            const apiKey = document.getElementById('arr_api_key');
-            apiKey.required = true;
-            apiKey.placeholder = '';
-            document.getElementById('arr-form-title').textContent = 'Add Instance';
-            document.getElementById('arr-submit-btn').textContent = 'Add';
-            document.getElementById('arr-cancel-btn').classList.add('d-none');
-        }
-
-        function testArr(id) {
-            const btn = document.getElementById(`test-arr-${id}-btn`);
-            const originalText = btn.innerHTML;
-            btn.disabled = true;
-            btn.innerHTML = '<span class="spinner-border spinner-border-sm" role="status"></span>';
-            fetch(`/api/test-arr/${id}`, { method: 'POST' })
-                .then(response => response.json())
-                .then(data => {
-                    const ok = data.status === 'success';
-                    btn.innerHTML = ok ? data.message : 'Failed';
-                    btn.classList.replace('btn-outline-secondary', ok ? 'btn-success' : 'btn-danger');
-                    if (!ok) alert(data.message);
-                })
-                .catch(error => {
-                    btn.innerHTML = 'Error';
-                    btn.classList.replace('btn-outline-secondary', 'btn-danger');
-                    alert('Network error: ' + error);
-                })
-                .finally(() => {
-                    btn.disabled = false;
-                    setTimeout(() => {
-                        btn.innerHTML = originalText;
-                        btn.classList.remove('btn-success', 'btn-danger');
-                        btn.classList.add('btn-outline-secondary');
-                    }, 3000);
-                });
-        }
+        if (location.hash === '#danger') document.getElementById('settings-save-bar').style.display = 'none';
 
         function testNotification(type) {
             const btn = document.getElementById(`test-${type}-btn`);
@@ -315,4 +153,4 @@
                 });
         }
     </script>
-{% endblock %} 
+{% endblock %}

@@ -1,0 +1,54 @@
+{% macro page_header(title, description=None) %}
+<div class="page-header">
+    <div>
+        <h1>{{ title }}</h1>
+        {% if description %}<p>{{ description }}</p>{% endif %}
+    </div>
+    {% if caller %}<div class="d-flex gap-2 flex-wrap">{{ caller() }}</div>{% endif %}
+</div>
+{% endmacro %}
+
+{# groups: list of (group_label, [(value, label, icon), ...]) #}
+{% macro section_nav(groups, label='Sections') %}
+<div class="section-select">
+    <select class="form-select" aria-label="{{ label }}">
+        {% for group_label, sections in groups %}
+            {% for value, text, icon in sections %}<option value="{{ value }}">{% if group_label %}{{ group_label }} · {% endif %}{{ text }}</option>{% endfor %}
+        {% endfor %}
+    </select>
+</div>
+<nav class="section-nav" aria-label="{{ label }}">
+    {% for group_label, sections in groups %}
+    <div class="section-group">
+        {% if group_label %}<p class="section-group-label">{{ group_label }}</p>{% endif %}
+        {% for value, text, icon in sections %}
+        <button type="button" class="section-btn" data-section="{{ value }}">{% if icon %}<i class="bi {{ icon }}"></i>{% endif %}{{ text }}</button>
+        {% endfor %}
+    </div>
+    {% endfor %}
+</nav>
+{% endmacro %}
+
+{% macro switch_row(name, title, description, checked, value='true', id=None) %}
+{% set field_id = id or name %}
+<label class="setting-row" for="{{ field_id }}">
+    <div>
+        <div class="title">{{ title }}</div>
+        {% if description %}<div class="desc">{{ description }}</div>{% endif %}
+    </div>
+    <div class="form-check form-switch">
+        <input class="form-check-input" type="checkbox" role="switch" id="{{ field_id }}" name="{{ name }}" value="{{ value }}" {% if checked %}checked{% endif %}>
+    </div>
+</label>
+{% endmacro %}
+
+{% macro status_badge(status) %}
+{% if status and status.status == 'Online' %}
+    <span class="badge bg-success"><span class="status-dot online inline"></span>Online</span>
+    {% if status.version %}<span class="badge badge-outline">{{ status.version }}</span>{% endif %}
+{% elif status %}
+    <span class="badge bg-danger" title="{{ status.error }}"><span class="status-dot offline inline"></span>Offline</span>
+{% else %}
+    <span class="badge badge-outline">Unknown</span>
+{% endif %}
+{% endmacro %}

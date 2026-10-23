@@ -1,0 +1,253 @@
+{% extends "base.html" %}
+{% from "_macros.html" import page_header, section_nav, switch_row, status_badge %}
+{% set is_new = instance.id is none %}
+
+{% block title %}{{ 'Add instance' if is_new else values.name }} - qPanel{% endblock %}
+
+{% block content %}
+    {% call page_header('Add qBittorrent instance' if is_new else values.name,
+                        'Connect a qBittorrent client and choose which automations run on it.' if is_new else values.host) %}
+        {% if not is_new %}{{ status_badge(status) }}{% endif %}
+    {% endcall %}
+
+    {% set groups = [
+        ('Instance', [('connection', 'Connection', 'bi-plug'), ('paths', 'Download paths', 'bi-folder2')]),
+        ('Automations', [('hardlinks', 'Hard links (noHL)', 'bi-link-45deg'), ('hygiene', 'Torrent hygiene', 'bi-stars'),
+                         ('orphaned', 'Orphaned files', 'bi-file-earmark-x'), ('rules', 'Rules', 'bi-sliders')]),
+    ] %}
+
+    <div class="sectioned" data-sectioned="{{ active_tab }}" id="instance-sections">
+        {{ section_nav(groups, 'Instance settings') }}
+
+        <div class="section-content">
+            <form method="post" id="instance-form" action="{{ url_for('new_instance') if is_new else url_for('edit_instance', instance_id=instance.id) }}">
+                <input type="hidden" name="active_tab" id="active_tab" value="{{ active_tab }}">
+
+                <!-- Connection -->
+                <section data-section-panel="connection">
+                    <div class="card">
+                        <div class="card-header">
+                            <h3 class="card-title">Connection</h3>
+                            <p class="card-description">How qPanel reaches the qBittorrent Web UI.</p>
+                        </div>
+                        <div class="card-body">
+                            <div class="row g-3">
+                                <div class="col-md-6">
+                                    <label for="name" class="form-label">Instance name</label>
+                                    <input type="text" class="form-control" id="name" name="name" value="{{ values.name }}" required>
+                                </div>
+                                <div class="col-md-6">
+                                    <label for="host" class="form-label">Host</label>
+                                    <input type="text" class="form-control" id="host" name="host" value="{{ values.host }}" required placeholder="http://192.168.1.10:8080">
+                                </div>
+                                <div class="col-md-6">
+                                    <label for="username" class="form-label">Username</label>
+                                    <input type="text" class="form-control" id="username" name="username" value="{{ values.username }}" autocomplete="off">
+                                </div>
+                                <div class="col-md-6">
+                                    <label for="password" class="form-label">Password</label>
+                                    <input type="password" class="form-control" id="password" name="password" autocomplete="new-password" placeholder="{{ '' if is_new else 'Leave blank to keep current password' }}">
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </section>
+
+                <!-- Download paths -->
+                <section data-section-panel="paths">
+                    <div class="card">
+                        <div class="card-header">
+                            <h3 class="card-title">Download paths</h3>
+                            <p class="card-description">Maps qBittorrent's download directory to the same files as mounted in qPanel. Required for hard link tagging and orphaned files scan.</p>
+                        </div>
+                        <div class="card-body">
+                            <div class="row g-3">
+                                <div class="col-md-6">
+                                    <label for="qbt_download_dir" class="form-label">qBittorrent download directory</label>
+                                    <input type="text" class="form-control font-mono" id="qbt_download_dir" name="qbt_download_dir" value="{{ values.qbt_download_dir }}" placeholder="/downloads">
+                                    <div class="form-text">Absolute path as qBittorrent sees it.</div>
+                                </div>
+                                <div class="col-md-6">
+                                    <label for="mapped_download_dir" class="form-label">Mapped directory in qPanel</label>
+                                    <input type="text" class="form-control font-mono" id="mapped_download_dir" name="mapped_download_dir" value="{{ values.mapped_download_dir }}" placeholder="/data/torrents">
+                                    <div class="form-text">The same location from qPanel's container.</div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </section>
+
+                <!-- Hard links -->
+                <section data-section-panel="hardlinks">
+                    <div class="card">
+                        <div class="card-header">
+                            <h3 class="card-title">Hard links (noHL)</h3>
+                            <p class="card-description">Tags torrents whose files exist only in the download directory (not imported by Sonarr/Radarr) with <code>noHL</code>, one hour after completion.</p>
+                        </div>
+                        <div class="card-body">
+                            {{ switch_row('tag_nohardlinks', "Tag torrents that don't have hard links", "Adds the 'noHL' tag. Requires download paths.", values.tag_nohardlinks) }}
+                            <div class="setting-sub" data-depends-on="tag_nohardlinks">
+                                {{ switch_row('nohl_skip_arr_import_blocked', 'Ignore torrents awaiting import in Sonarr/Radarr',
+                                              "Completed downloads still waiting in an arr queue (e.g. \"Manual Import required\") aren't tagged, so they stay in the queue until imported.",
+                                              values.nohl_skip_arr_import_blocked) }}
+                                {% if not arr_instances %}
+                                <div class="alert alert-warning mb-0">No Sonarr/Radarr instances configured. <a href="{{ url_for('instances', _anchor='arr') }}">Add one</a> for this option to take effect.</div>
+                                {% endif %}
+                                {{ switch_row('remove_category_on_nohl_removal', 'Remove categories when noHL tag is set',
+                                              'Clears the listed categories when the tag is added, so the arr stops tracking the download.',
+                                              values.remove_category_on_nohl_removal) }}
+                                <div data-depends-on="remove_category_on_nohl_removal">
+                                    <label for="nohl_removal_categories" class="form-label">Categories to remove</label>
+                                    <input type="text" class="form-control" id="nohl_removal_categories" name="nohl_removal_categories" value="{{ values.nohl_removal_categories }}" placeholder="sonarr, radarr">
+                                    <div class="form-text">Comma-separated category names.</div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </section>
+
+                <!-- Torrent hygiene -->
+                <section data-section-panel="hygiene">
+                    <div class="card">
+                        <div class="card-header">
+                            <h3 class="card-title">Torrent hygiene</h3>
+                            <p class="card-description">Housekeeping that runs every scheduler cycle.</p>
+                        </div>
+                        <div class="card-body">
+                            {{ switch_row('pause_cross_seeded_torrents', 'Pause cross-seeded torrents',
+                                          'Pauses torrents that have the same name as a torrent that is already paused.', values.pause_cross_seeded_torrents) }}
+                            {{ switch_row('tag_unregistered_torrents', 'Tag unregistered torrents',
+                                          "Adds the 'unregistered' tag when a tracker reports the torrent is no longer registered.", values.tag_unregistered_torrents) }}
+                        </div>
+                    </div>
+                </section>
+
+                <!-- Orphaned files -->
+                <section data-section-panel="orphaned">
+                    <div class="card">
+                        <div class="card-header with-actions">
+                            <div>
+                                <h3 class="card-title">Orphaned files</h3>
+                                <p class="card-description">Finds files on disk that no torrent references. Requires download paths.</p>
+                            </div>
+                            <a class="btn btn-outline-secondary btn-sm" href="{{ url_for('activity', _anchor='orphaned') }}"><i class="bi bi-box-arrow-up-right"></i>View results</a>
+                        </div>
+                        <div class="card-body">
+                            {{ switch_row('orphaned_scan_enabled', 'Enable orphaned files scan', 'Results appear under Activity → Orphaned files.', values.orphaned_scan_enabled) }}
+                            <div class="setting-sub" data-depends-on="orphaned_scan_enabled">
+                                <div>
+                                    <label for="orphaned_min_age_days" class="form-label">Minimum age (days)</label>
+                                    <input type="number" class="form-control" style="max-width: 10rem" id="orphaned_min_age_days" name="orphaned_min_age_days" value="{{ values.orphaned_min_age_days }}" min="0">
+                                    <div class="form-text">Only report files older than this.</div>
+                                </div>
+                                <div>
+                                    <label for="orphaned_ignore_patterns" class="form-label">Ignore patterns (regex)</label>
+                                    <textarea class="form-control" id="orphaned_ignore_patterns" name="orphaned_ignore_patterns" rows="4" placeholder="One regex per line">{{ values.orphaned_ignore_patterns }}</textarea>
+                                    <div class="form-text">Files matching any pattern are skipped.</div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </section>
+
+                <div class="save-bar" id="save-bar">
+                    <a href="{{ url_for('instances') }}" class="btn btn-outline-secondary">Cancel</a>
+                    <button type="submit" class="btn btn-primary"><i class="bi bi-check2"></i>{{ 'Add instance' if is_new else 'Save changes' }}</button>
+                </div>
+            </form>
+
+            <!-- Rules (separate forms) -->
+            <section data-section-panel="rules">
+                <div class="card">
+                    <div class="card-header with-actions">
+                        <div>
+                            <h3 class="card-title">Rules</h3>
+                            <p class="card-description">Seeding and speed limits applied to matching torrents on this instance.</p>
+                        </div>
+                        <a class="btn btn-outline-secondary btn-sm" href="{{ url_for('rules') }}"><i class="bi bi-sliders"></i>Manage rules</a>
+                    </div>
+                    <div class="card-body">
+                        {% if is_new %}
+                            <p class="text-muted mb-0">Save the instance first, then assign rules here.</p>
+                        {% else %}
+                            {% if instance.rules %}
+                            <div class="table-responsive mb-3">
+                                <table class="table align-middle">
+                                    <thead><tr><th>Rule</th><th>Condition</th><th class="text-end"></th></tr></thead>
+                                    <tbody>
+                                        {% for rule in instance.rules %}
+                                        <tr>
+                                            <td>{{ rule.name }}</td>
+                                            <td><span class="badge badge-outline">{{ rule.condition_type }}</span> <span class="text-muted text-break-all">{{ rule.condition_value }}</span></td>
+                                            <td class="text-end">
+                                                <form method="post" action="{{ url_for('remove_rule_from_instance', instance_id=instance.id, rule_id=rule.id) }}" class="d-inline">
+                                                    <button type="submit" class="btn btn-ghost btn-sm" title="Unassign"><i class="bi bi-x-lg"></i></button>
+                                                </form>
+                                            </td>
+                                        </tr>
+                                        {% endfor %}
+                                    </tbody>
+                                </table>
+                            </div>
+                            {% else %}
+                            <p class="text-muted">No rules assigned yet.</p>
+                            {% endif %}
+
+                            {% set assigned_ids = instance.rules|map(attribute='id')|list %}
+                            {% set available = rules|rejectattr('id', 'in', assigned_ids)|list %}
+                            {% if available %}
+                            <form method="post" action="{{ url_for('assign_rule', instance_id=instance.id) }}" class="d-flex gap-2">
+                                <select class="form-select" name="rule_id" required>
+                                    <option selected disabled value="">Choose a rule…</option>
+                                    {% for rule in available %}<option value="{{ rule.id }}">{{ rule.name }}</option>{% endfor %}
+                                </select>
+                                <button type="submit" class="btn btn-primary"><i class="bi bi-plus-lg"></i>Assign</button>
+                            </form>
+                            {% elif rules %}
+                            <p class="text-muted mb-0">All rules are assigned.</p>
+                            {% else %}
+                            <p class="text-muted mb-0">No rules defined yet. <a href="{{ url_for('rules') }}">Create one</a>.</p>
+                            {% endif %}
+                        {% endif %}
+                    </div>
+                </div>
+
+                {% if not is_new %}
+                <div class="card border-destructive">
+                    <div class="card-header">
+                        <h3 class="card-title">Danger zone</h3>
+                        <p class="card-description">Removes this instance and its activity log from qPanel. Torrents in qBittorrent are not touched.</p>
+                    </div>
+                    <div class="card-body">
+                        <form action="{{ url_for('delete_instance', instance_id=instance.id) }}" method="post" onsubmit='return confirm({{ ("Delete instance " ~ values.name ~ "?")|tojson }});'>
+                            <button type="submit" class="btn btn-danger"><i class="bi bi-trash"></i>Delete instance</button>
+                        </form>
+                    </div>
+                </div>
+                {% endif %}
+            </section>
+        </div>
+    </div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+    (function () {
+        const root = document.getElementById('instance-sections');
+        const saveBar = document.getElementById('save-bar');
+        const activeTab = document.getElementById('active_tab');
+        root.addEventListener('section:change', function (e) {
+            activeTab.value = e.detail;
+            saveBar.style.display = e.detail === 'rules' ? 'none' : '';
+        });
+        // Re-dispatch for the initial section (the base script ran before this listener was attached).
+        const current = root.querySelector('[data-section-panel].active');
+        if (current) root.dispatchEvent(new CustomEvent('section:change', { detail: current.dataset.sectionPanel }));
+        // Jump to the section holding an invalid field, otherwise the browser can't show its message.
+        document.getElementById('instance-form').addEventListener('invalid', function (e) {
+            const panel = e.target.closest('[data-section-panel]');
+            if (panel && !panel.classList.contains('active')) location.hash = panel.dataset.sectionPanel;
+        }, true);
+    })();
+</script>
+{% endblock %}

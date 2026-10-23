@@ -1,0 +1,103 @@
+{% extends "base.html" %}
+{% from "_macros.html" import page_header, section_nav %}
+
+{% block title %}Activity - qPanel{% endblock %}
+
+{% block content %}
+    {{ page_header('Activity', 'What qPanel has done, and what its scans have found.') }}
+
+    {% set groups = [(None, [('logs', 'Logs', 'bi-journal-text'), ('orphaned', 'Orphaned files', 'bi-file-earmark-x')])] %}
+    <div class="sectioned" data-sectioned="{{ tab }}">
+        {{ section_nav(groups, 'Activity') }}
+
+        <div class="section-content">
+            <section data-section-panel="logs">
+                <div class="card">
+                    <div class="card-header with-actions">
+                        <div>
+                            <h3 class="card-title">Logs</h3>
+                            <p class="card-description">{{ logs.total }} entr{{ 'y' if logs.total == 1 else 'ies' }}{% if instance_filter %} for this instance{% endif %}. Times are UTC.</p>
+                        </div>
+                        <div class="d-flex gap-2 align-items-center">
+                            <form method="get" action="{{ url_for('activity') }}">
+                                <select class="form-select form-select-sm" name="instance_id" onchange="this.form.submit()" aria-label="Filter by instance">
+                                    <option value="">All instances</option>
+                                    {% for inst in instances %}<option value="{{ inst.id }}" {% if inst.id == instance_filter %}selected{% endif %}>{{ inst.name }}</option>{% endfor %}
+                                </select>
+                            </form>
+                            {% if logs.total %}
+                            <form method="post" action="{{ url_for('clear_logs') }}" onsubmit="return confirm('Clear all logs?');">
+                                <button type="submit" class="btn btn-outline-danger btn-sm"><i class="bi bi-trash"></i>Clear</button>
+                            </form>
+                            {% endif %}
+                        </div>
+                    </div>
+                    <div class="card-body px-0 pb-2">
+                        {% if logs.items %}
+                        <ul class="log-list">
+                            {% for log in logs.items %}
+                            <li class="log-item">
+                                <span class="log-time">{{ log.timestamp.strftime('%Y-%m-%d %H:%M:%S') }}</span>
+                                <div><strong>{{ log.instance.name }}</strong> · {{ log.action }}{% if log.details %}<div class="log-details">{{ log.details }}</div>{% endif %}</div>
+                            </li>
+                            {% endfor %}
+                        </ul>
+                        {% else %}
+                        <div class="empty-state"><i class="bi bi-inbox"></i>No activity yet.</div>
+                        {% endif %}
+                    </div>
+                    {% if logs.pages > 1 %}
+                    <div class="card-footer d-flex justify-content-between align-items-center">
+                        <span class="text-muted">Page {{ logs.page }} of {{ logs.pages }}</span>
+                        <ul class="pagination pagination-sm">
+                            <li class="page-item {% if not logs.has_prev %}disabled{% endif %}">
+                                <a class="page-link" href="{{ url_for('activity', page=logs.prev_num, instance_id=instance_filter, _anchor='logs') if logs.has_prev else '#' }}">Previous</a>
+                            </li>
+                            {% for p in logs.iter_pages(left_edge=1, right_edge=1, left_current=1, right_current=2) %}
+                                {% if p %}
+                                <li class="page-item {% if p == logs.page %}active{% endif %}"><a class="page-link" href="{{ url_for('activity', page=p, instance_id=instance_filter, _anchor='logs') }}">{{ p }}</a></li>
+                                {% else %}
+                                <li class="page-item disabled"><span class="page-link">…</span></li>
+                                {% endif %}
+                            {% endfor %}
+                            <li class="page-item {% if not logs.has_next %}disabled{% endif %}">
+                                <a class="page-link" href="{{ url_for('activity', page=logs.next_num, instance_id=instance_filter, _anchor='logs') if logs.has_next else '#' }}">Next</a>
+                            </li>
+                        </ul>
+                    </div>
+                    {% endif %}
+                </div>
+            </section>
+
+            <section data-section-panel="orphaned">
+                <div class="card mb-4">
+                    <div class="card-header with-actions">
+                        <div>
+                            <h3 class="card-title">Orphaned files</h3>
+                            <p class="card-description">Files on disk not referenced by any torrent. Configure scanning per instance under <em>Instances → Orphaned files</em>.</p>
+                        </div>
+                        {% if orphaned_files %}
+                        <form method="post" action="{{ url_for('clear_orphaned_files') }}" onsubmit="return confirm('Clear all orphaned file entries?');">
+                            <button type="submit" class="btn btn-outline-danger btn-sm"><i class="bi bi-trash"></i>Clear all</button>
+                        </form>
+                        {% endif %}
+                    </div>
+                    <div class="card-body pt-3">
+                        <div class="chip-row">
+                        {% for inst in instances %}
+                            <a class="badge {{ 'bg-success' if inst.orphaned_scan_enabled else 'badge-outline' }} text-decoration-none" href="{{ url_for('edit_instance', instance_id=inst.id, _anchor='orphaned') }}">
+                                {{ inst.name }}: scan {{ 'on' if inst.orphaned_scan_enabled else 'off' }}
+                            </a>
+                        {% endfor %}
+                        </div>
+                    </div>
+                </div>
+                {% include "_orphaned_results.html" %}
+            </section>
+        </div>
+    </div>
+{% endblock %}
+
+{% block scripts %}
+{% include "_orphaned_scripts.html" %}
+{% endblock %}

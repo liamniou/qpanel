@@ -1,0 +1,205 @@
+    <script>
+        document.addEventListener('DOMContentLoaded', function() {
+            // Check permissions on page load
+            checkPermissions();
+        });
+
+        function toggleGroup(element) {
+            const group = element.closest('.orphaned-group');
+            group.classList.toggle('collapsed');
+        }
+
+        function checkPermissions() {
+            fetch('/api/orphaned-files/check-permissions')
+                .then(response => response.json())
+                .then(data => {
+                    const warningDiv = document.getElementById('permission-warning');
+                    const detailsDiv = document.getElementById('permission-details');
+                    const errors = [];
+
+                    for (const [instanceId, result] of Object.entries(data)) {
+                        if (result.status === 'error') {
+                            errors.push(`<code>${result.name}</code>: ${result.path} — ${result.error}`);
+                        }
+                    }
+
+                    if (errors.length > 0) {
+                        detailsDiv.innerHTML = errors.map(e => `<div>• ${e}</div>`).join('');
+                        warningDiv.classList.remove('d-none');
+                    } else {
+                        warningDiv.classList.add('d-none');
+                    }
+                })
+                .catch(error => {
+                    console.error('Error checking permissions:', error);
+                });
+        }
+
+        function deleteFileFromDisk(fileId, buttonElement) {
+            if (!confirm('Are you sure you want to permanently delete this file from disk?')) {
+                return;
+            }
+
+            const originalContent = buttonElement.innerHTML;
+            buttonElement.innerHTML = '<span class="spinner-border spinner-border-sm"></span>';
+            buttonElement.disabled = true;
+
+            fetch(`/api/orphaned-files/delete-file/${fileId}`, {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json'
+                }
+            })
+            .then(response => response.json().then(data => ({ status: response.status, data })))
+            .then(({ status, data }) => {
+                if (data.status === 'success') {
+                    // Remove the row from the table
+                    const row = buttonElement.closest('tr');
+                    row.style.transition = 'opacity 0.3s';
+                    row.style.opacity = '0';
+                    setTimeout(() => {
+                        row.remove();
+                        updateGroupCounts();
+                    }, 300);
+                    showToast('success', data.message);
+                } else {
+                    showToast('danger', data.message);
+                    buttonElement.innerHTML = originalContent;
+                    buttonElement.disabled = false;
+                }
+            })
+            .catch(error => {
+                showToast('danger', 'Network error: ' + error.message);
+                buttonElement.innerHTML = originalContent;
+                buttonElement.disabled = false;
+            });
+        }
+
+        function deleteFolderFromDisk(buttonElement) {
+            const group = buttonElement.closest('.orphaned-group');
+            const fileIds = JSON.parse(group.dataset.fileIds);
+            const directory = group.dataset.directory;
+            const instanceId = group.dataset.instanceId;
+
+            if (!confirm(`Are you sure you want to permanently delete all ${fileIds.length} files in this folder from disk?\n\n${directory}`)) {
+                return;
+            }
+
+            const originalContent = buttonElement.innerHTML;
+            buttonElement.innerHTML = '<span class="spinner-border spinner-border-sm"></span>';
+            buttonElement.disabled = true;
+
+            fetch('/api/orphaned-files/delete-folder', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json'
+                },
+                body: JSON.stringify({
+                    file_ids: fileIds,
+                    directory: directory,
+                    instance_id: instanceId
+                })
+            })
+            .then(response => response.json().then(data => ({ status: response.status, data })))
+            .then(({ status, data }) => {
+                if (data.status === 'success') {
+                    // Remove the entire group
+                    group.style.transition = 'opacity 0.3s';
+                    group.style.opacity = '0';
+                    setTimeout(() => {
+                        group.remove();
+                        updateGroupCounts();
+                    }, 300);
+                    showToast('success', data.message);
+                } else if (data.status === 'partial') {
+                    // Some files deleted, some errors
+                    showToast('warning', data.message);
+                    // Remove successfully deleted rows
+                    if (data.deleted) {
+                        data.deleted.forEach(path => {
+                            const rows = group.querySelectorAll('tr');
+                            rows.forEach(row => {
+                                if (row.querySelector('code')?.textContent.includes(path.split('/').pop())) {
+                                    row.remove();
+                                }
+                            });
+                        });
+                    }
+                    // Show error details
+                    if (data.errors && data.errors.length > 0) {
+                        const errorMsgs = data.errors.map(e => e.error || e.path).join(', ');
+                        showToast('danger', 'Errors: ' + errorMsgs);
+                    }
+                    buttonElement.innerHTML = originalContent;
+                    buttonElement.disabled = false;
+                    updateGroupCounts();
+                } else {
+                    showToast('danger', data.message);
+                    buttonElement.innerHTML = originalContent;
+                    buttonElement.disabled = false;
+                }
+            })
+            .catch(error => {
+                showToast('danger', 'Network error: ' + error.message);
+                buttonElement.innerHTML = originalContent;
+                buttonElement.disabled = false;
+            });
+        }
+
+        function updateGroupCounts() {
+            // Update file counts in group headers
+            document.querySelectorAll('.orphaned-group').forEach(group => {
+                const fileCount = group.querySelectorAll('tbody tr').length;
+                const badge = group.querySelector('.badge.bg-secondary');
+                if (badge) {
+                    badge.textContent = `${fileCount} files`;
+                }
+                // Remove empty groups
+                if (fileCount === 0) {
+                    group.remove();
+                }
+            });
+
+            // Update instance card counts
+            document.querySelectorAll('.card.mb-4').forEach(card => {
+                const groups = card.querySelectorAll('.orphaned-group').length;
+                const ungrouped = card.querySelectorAll('.orphaned-ungrouped tbody tr').length;
+                const countSpan = card.querySelector('.card-header .text-muted.small');
+                if (countSpan) {
+                    countSpan.textContent = `${groups} groups, ${ungrouped} ungrouped files`;
+                }
+            });
+        }
+
+        function showToast(type, message) {
+            // Create a simple toast notification
+            const toast = document.createElement('div');
+            toast.className = `alert alert-${type} position-fixed`;
+            toast.style.cssText = 'top: 20px; right: 20px; z-index: 9999; max-width: 400px; animation: fadeIn 0.3s';
+            toast.innerHTML = `
+                <div class="d-flex align-items-center">
+                    <i class="bi bi-${type === 'success' ? 'check-circle' : type === 'warning' ? 'exclamation-triangle' : 'x-circle'} me-2"></i>
+                    <span>${message}</span>
+                    <button type="button" class="btn-close ms-auto" onclick="this.parentElement.parentElement.remove()"></button>
+                </div>
+            `;
+            document.body.appendChild(toast);
+
+            // Auto-remove after 5 seconds
+            setTimeout(() => {
+                toast.style.animation = 'fadeOut 0.3s';
+                setTimeout(() => toast.remove(), 300);
+            }, 5000);
+        }
+    </script>
+
+    <style>
+        @keyframes fadeIn {
+            from { opacity: 0; transform: translateY(-10px); }
+            to { opacity: 1; transform: translateY(0); }
+        }
+        @keyframes fadeOut {
+            from { opacity: 1; transform: translateY(0); }
+            to { opacity: 0; transform: translateY(-10px); }
+        }
+    </style>

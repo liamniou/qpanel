@@ -44,6 +44,8 @@ app = Flask(__name__)
 app.secret_key = 'supersecretkey'
 app.config['SQLALCHEMY_DATABASE_URI'] = f"sqlite:///{os.path.join(DATA_DIR, 'qpanel.db')}"
 app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
+# Cache-busting token for static assets so browsers pick up CSS changes after an upgrade.
+app.config['ASSET_VERSION'] = int(os.path.getmtime(os.path.join(BASE_DIR, 'static', 'css', 'style.css')))
 db = SQLAlchemy(app)
 migrate = Migrate(app, db)
 
@@ -116,39 +118,48 @@ class OrphanedFile(db.Model):
     file_size = db.Column(db.BigInteger, nullable=True)
     file_mtime = db.Column(db.DateTime, nullable=True)
 
+# Last known connection status per instance, shown as sidebar dots without querying qBittorrent on every page.
+INSTANCE_STATUS_CACHE = {}
+
+def record_instance_status(instance_id, status):
+    INSTANCE_STATUS_CACHE[instance_id] = status
+    return status
+
+def get_instance_status(instance):
+    client = get_client(instance)
+    if not client:
+        return record_instance_status(instance.id, {'status': 'Offline', 'error': 'Could not connect. Check logs for details.'})
+    try:
+        return record_instance_status(instance.id, {'status': 'Online', 'version': client.app_version()})
+    except Exception as e:
+        return record_instance_status(instance.id, {'status': 'Offline', 'error': f'An unexpected error occurred: {e}'})
+
+@app.context_processor
+def inject_sidebar():
+    return {
+        'sidebar_instances': Instance.query.order_by(Instance.name).all(),
+        'instance_status_cache': INSTANCE_STATUS_CACHE,
+    }
+
 @app.route('/')
 def index():
     instances = Instance.query.all()
-    rules = Rule.query.all()
-    instance_statuses = {}
-    for instance in instances:
-        client = get_client(instance)
-        if client:
-            try:
-                version = client.app_version()
-                instance_statuses[instance.id] = {'status': 'Online', 'version': version}
-            except Exception as e:
-                instance_statuses[instance.id] = {'status': 'Offline', 'error': f'An unexpected error occurred: {e}'}
+    instance_statuses = {instance.id: get_instance_status(instance) for instance in instances}
+    logs = ActionLog.query.order_by(ActionLog.timestamp.desc()).limit(10).all()
+    return render_template('index.html',
+                           instances=instances,
+                           instance_statuses=instance_statuses,
+                           orphaned_count=OrphanedFile.query.count(),
+                           logs=logs)
 
-        else:
-            instance_statuses[instance.id] = {'status': 'Offline', 'error': 'Could not connect. Check logs for details.'}
-
-    logs = ActionLog.query.order_by(ActionLog.timestamp.desc()).limit(20).all()
-
-    return render_template('index.html', 
-                           instances=instances, 
-                           instance_statuses=instance_statuses, 
-                           logs=logs,
-                           rules=rules)
-
-@app.route('/instances/<instance_id>/assign-rule', methods=['POST'])
+@app.route('/instances/<int:instance_id>/assign-rule', methods=['POST'])
 def assign_rule(instance_id):
     instance = Instance.query.get_or_404(instance_id)
     rule_id = request.form.get('rule_id')
 
     if not rule_id:
         flash('Please select a rule to assign.', 'warning')
-        return redirect(url_for('index'))
+        return redirect(url_for('edit_instance', instance_id=instance.id, _anchor='rules'))
 
     rule = Rule.query.get_or_404(rule_id)
     
@@ -159,9 +170,9 @@ def assign_rule(instance_id):
     else:
         flash(f"Rule '{rule.name}' is already assigned to instance '{instance.name}'.", 'info')
         
-    return redirect(url_for('index'))
+    return redirect(url_for('edit_instance', instance_id=instance.id, _anchor='rules'))
 
-@app.route('/instances/<instance_id>/remove-rule/<rule_id>', methods=['POST'])
+@app.route('/instances/<int:instance_id>/remove-rule/<int:rule_id>', methods=['POST'])
 def remove_rule_from_instance(instance_id, rule_id):
     instance = Instance.query.get_or_404(instance_id)
     rule = Rule.query.get_or_404(rule_id)
@@ -173,7 +184,33 @@ def remove_rule_from_instance(instance_id, rule_id):
     else:
         flash(f"Rule '{rule.name}' was not assigned to instance '{instance.name}'.", 'info')
 
-    return redirect(url_for('index'))
+    return redirect(url_for('edit_instance', instance_id=instance.id, _anchor='rules'))
+
+LOGS_PER_PAGE = 100
+ACTIVITY_TABS = ('logs', 'orphaned')
+
+@app.route('/activity')
+def activity():
+    tab = request.args.get('tab', 'logs')
+    if tab not in ACTIVITY_TABS:
+        tab = 'logs'
+    instances = Instance.query.all()
+
+    instance_filter = request.args.get('instance_id', type=int)
+    logs_query = ActionLog.query
+    if instance_filter:
+        logs_query = logs_query.filter_by(instance_id=instance_filter)
+    logs = logs_query.order_by(ActionLog.timestamp.desc()).paginate(
+        page=request.args.get('page', 1, type=int), per_page=LOGS_PER_PAGE, error_out=False)
+
+    orphaned = OrphanedFile.query.order_by(OrphanedFile.timestamp.desc()).all()
+    return render_template('activity.html',
+                           tab=tab,
+                           instances=instances,
+                           instance_filter=instance_filter,
+                           logs=logs,
+                           orphaned_files=orphaned,
+                           grouped_files=group_orphaned_files_by_directory(orphaned))
 
 @app.route('/logs/clear', methods=['POST'])
 def clear_logs():
@@ -184,7 +221,7 @@ def clear_logs():
     except Exception as e:
         db.session.rollback()
         flash(f'Error clearing logs: {e}', 'danger')
-    return redirect(url_for('index'))
+    return redirect(url_for('activity', tab='logs'))
 
 @app.route('/telegram/clear', methods=['POST'])
 def clear_telegram_messages():
@@ -214,8 +251,7 @@ def settings():
         flash('Settings saved successfully! Please restart the application for the new interval to take effect.', 'success')
         return redirect(url_for('settings'))
 
-    arr_instances = ArrInstance.query.order_by(ArrInstance.name).all()
-    return render_template('settings.html', settings=load_settings(), arr_instances=arr_instances)
+    return render_template('settings.html', settings=load_settings())
 
 ARR_TYPES = ('sonarr', 'radarr')
 
@@ -228,46 +264,46 @@ def _arr_form_values():
         'remove_category_on_cf_not_upgrade': request.form.get('remove_category_on_cf_not_upgrade') == 'true',
     }
 
-@app.route('/settings/arr', methods=['POST'])
+@app.route('/arr', methods=['POST'])
 def add_arr_instance():
     values = _arr_form_values()
     if not values['name'] or not values['url'] or not values['api_key'] or values['arr_type'] not in ARR_TYPES:
         flash('Name, type, URL and API key are required.', 'danger')
-        return redirect(url_for('settings'))
+        return redirect(url_for('instances', _anchor='arr'))
     if ArrInstance.query.filter_by(name=values['name']).first():
         flash(f"An arr instance named '{values['name']}' already exists.", 'danger')
-        return redirect(url_for('settings'))
+        return redirect(url_for('instances', _anchor='arr'))
     db.session.add(ArrInstance(**values))
     db.session.commit()
     flash(f"{values['arr_type'].capitalize()} instance '{values['name']}' added.", 'success')
-    return redirect(url_for('settings'))
+    return redirect(url_for('instances', _anchor='arr'))
 
-@app.route('/settings/arr/<int:arr_id>', methods=['POST'])
+@app.route('/arr/<int:arr_id>', methods=['POST'])
 def edit_arr_instance(arr_id):
     arr = ArrInstance.query.get_or_404(arr_id)
     values = _arr_form_values()
     if not values['name'] or not values['url'] or values['arr_type'] not in ARR_TYPES:
         flash('Name, type and URL are required.', 'danger')
-        return redirect(url_for('settings'))
+        return redirect(url_for('instances', _anchor='arr'))
     duplicate = ArrInstance.query.filter(ArrInstance.name == values['name'], ArrInstance.id != arr.id).first()
     if duplicate:
         flash(f"An arr instance named '{values['name']}' already exists.", 'danger')
-        return redirect(url_for('settings'))
+        return redirect(url_for('instances', _anchor='arr'))
     if not values['api_key']:
         values.pop('api_key')  # keep existing key when the field is left blank
     for key, value in values.items():
         setattr(arr, key, value)
     db.session.commit()
     flash(f"Arr instance '{arr.name}' updated.", 'success')
-    return redirect(url_for('settings'))
+    return redirect(url_for('instances', _anchor='arr'))
 
-@app.route('/settings/arr/<int:arr_id>/delete', methods=['POST'])
+@app.route('/arr/<int:arr_id>/delete', methods=['POST'])
 def delete_arr_instance(arr_id):
     arr = ArrInstance.query.get_or_404(arr_id)
     db.session.delete(arr)
     db.session.commit()
     flash(f"Arr instance '{arr.name}' deleted.", 'success')
-    return redirect(url_for('settings'))
+    return redirect(url_for('instances', _anchor='arr'))
 
 @app.route('/api/test-arr/<int:arr_id>', methods=['POST'])
 def test_arr_instance(arr_id):
@@ -364,10 +400,7 @@ def group_orphaned_files_by_directory(orphaned_files):
 
 @app.route('/orphaned-files')
 def orphaned_files():
-    instances = Instance.query.all()
-    orphaned = OrphanedFile.query.order_by(OrphanedFile.timestamp.desc()).all()
-    grouped_files = group_orphaned_files_by_directory(orphaned)
-    return render_template('orphaned_files.html', instances=instances, orphaned_files=orphaned, grouped_files=grouped_files)
+    return redirect(url_for('activity', tab='orphaned'))
 
 @app.route('/api/orphaned-files/check-permissions')
 def check_orphaned_permissions():
@@ -493,17 +526,6 @@ def delete_orphaned_folder():
         'deleted': results['deleted']
     })
 
-@app.route('/orphaned-files/settings/<instance_id>', methods=['POST'])
-def update_orphaned_settings(instance_id):
-    instance = Instance.query.get_or_404(instance_id)
-    instance.orphaned_scan_enabled = request.form.get('orphaned_scan_enabled') == 'on'
-    instance.orphaned_min_age_days = int(request.form.get('orphaned_min_age_days') or 7)
-    raw_patterns = request.form.get('orphaned_ignore_patterns', '')
-    instance.orphaned_ignore_patterns = raw_patterns
-    db.session.commit()
-    flash(f"Orphaned files settings for '{instance.name}' updated successfully!", 'success')
-    return redirect(url_for('orphaned_files'))
-
 @app.route('/orphaned-files/clear', methods=['POST'])
 def clear_orphaned_files():
     instance_id = request.form.get('instance_id')
@@ -519,7 +541,7 @@ def clear_orphaned_files():
     except Exception as e:
         db.session.rollback()
         flash(f'Error clearing orphaned files: {e}', 'danger')
-    return redirect(url_for('orphaned_files'))
+    return redirect(url_for('activity', tab='orphaned'))
 
 @app.route('/orphaned-files/delete/<int:file_id>', methods=['POST'])
 def delete_orphaned_file(file_id):
@@ -531,7 +553,7 @@ def delete_orphaned_file(file_id):
     except Exception as e:
         db.session.rollback()
         flash(f'Error removing file entry: {e}', 'danger')
-    return redirect(url_for('orphaned_files'))
+    return redirect(url_for('activity', tab='orphaned'))
 
 @app.route('/admin/remove-db', methods=['POST'])
 def remove_db():
@@ -552,81 +574,97 @@ def remove_db():
         
     return redirect(url_for('settings'))
 
-@app.route('/instances', methods=['GET', 'POST'])
+INSTANCE_BOOL_FIELDS = (
+    'pause_cross_seeded_torrents', 'tag_unregistered_torrents', 'tag_nohardlinks',
+    'nohl_skip_arr_import_blocked', 'remove_category_on_nohl_removal', 'orphaned_scan_enabled',
+)
+INSTANCE_TEXT_FIELDS = (
+    'name', 'host', 'username', 'qbt_download_dir', 'mapped_download_dir',
+    'nohl_removal_categories', 'orphaned_ignore_patterns',
+)
+
+def _instance_values(instance):
+    values = {field: getattr(instance, field) or '' for field in INSTANCE_TEXT_FIELDS}
+    values.update({field: bool(getattr(instance, field)) for field in INSTANCE_BOOL_FIELDS})
+    values['orphaned_min_age_days'] = instance.orphaned_min_age_days if instance.orphaned_min_age_days is not None else 7
+    return values
+
+def _instance_form_values():
+    form = request.form
+    values = {field: form.get(field, '').strip() for field in INSTANCE_TEXT_FIELDS}
+    values['orphaned_ignore_patterns'] = form.get('orphaned_ignore_patterns', '')
+    values.update({field: form.get(field) == 'true' for field in INSTANCE_BOOL_FIELDS})
+    values['orphaned_min_age_days'] = form.get('orphaned_min_age_days', '7').strip()
+    return values
+
+def _validate_instance_values(values, instance_id=None):
+    errors = []
+    if not values['name'] or not values['host']:
+        errors.append('Instance name and host are required.')
+    elif Instance.query.filter(Instance.name == values['name'], Instance.id != instance_id).first():
+        errors.append(f"An instance named '{values['name']}' already exists.")
+    if (values['tag_nohardlinks'] or values['orphaned_scan_enabled']) and not (values['qbt_download_dir'] and values['mapped_download_dir']):
+        errors.append('Download path mapping is required for hard link tagging and orphaned files scan.')
+    try:
+        values['orphaned_min_age_days'] = max(0, int(values['orphaned_min_age_days'] or 7))
+    except ValueError:
+        errors.append('Orphaned files min age must be a whole number of days.')
+    return errors
+
+def _render_instance_page(instance, values, active_tab='connection'):
+    status = get_instance_status(instance) if instance.id else None
+    return render_template('instance.html',
+                           instance=instance,
+                           values=values,
+                           status=status,
+                           active_tab=active_tab,
+                           rules=Rule.query.order_by(Rule.name).all(),
+                           arr_instances=ArrInstance.query.order_by(ArrInstance.name).all())
+
+def _save_instance(instance):
+    values = _instance_form_values()
+    active_tab = request.form.get('active_tab') or 'connection'
+    errors = _validate_instance_values(values, instance.id)
+    if errors:
+        for error in errors:
+            flash(error, 'danger')
+        return _render_instance_page(instance, values, active_tab), 400
+
+    for field, value in values.items():
+        setattr(instance, field, value)
+    if request.form.get('password'):
+        instance.password = request.form['password']
+    is_new = instance.id is None
+    if is_new:
+        db.session.add(instance)
+    db.session.commit()
+    flash(f"Instance '{instance.name}' {'added' if is_new else 'saved'}.", 'success')
+    return redirect(url_for('edit_instance', instance_id=instance.id, _anchor=active_tab))
+
+@app.route('/instances')
 def instances():
-    if request.method == 'POST':
-        tag_nohardlinks = request.form.get('tag_nohardlinks') == 'true'
-        if tag_nohardlinks:
-            qbt_download_dir = request.form.get('qbt_download_dir')
-            mapped_download_dir = request.form.get('mapped_download_dir')
-            if not qbt_download_dir or not mapped_download_dir:
-                flash('Path mappings are required when hard link tagging is enabled.', 'danger')
-                return redirect(url_for('instances'))
-
-        new_instance = Instance(
-            name=request.form['name'],
-            host=request.form['host'],
-            username=request.form['username'],
-            password=request.form['password'],
-            qbt_download_dir=request.form.get('qbt_download_dir'),
-            mapped_download_dir=request.form.get('mapped_download_dir'),
-            tag_nohardlinks=request.form.get('tag_nohardlinks') == 'true',
-            remove_category_on_nohl_removal=request.form.get('remove_category_on_nohl_removal') == 'true',
-            nohl_removal_categories=request.form.get('nohl_removal_categories', ''),
-            pause_cross_seeded_torrents=request.form.get('pause_cross_seeded_torrents') == 'true',
-            tag_unregistered_torrents=request.form.get('tag_unregistered_torrents') == 'true'
-        )
-        db.session.add(new_instance)
-        db.session.commit()
-        flash(f"Instance '{new_instance.name}' saved successfully!", 'success')
-        return redirect(url_for('instances'))
-    
     instances = Instance.query.all()
-    instance_statuses = {}
-    for instance in instances:
-        client = get_client(instance)
-        if client:
-            try:
-                version = client.app_version()
-                instance_statuses[instance.id] = {'status': 'Online', 'version': version}
-            except Exception as e:
-                instance_statuses[instance.id] = {'status': 'Offline', 'error': f'An unexpected error occurred: {e}'}
-        else:
-            instance_statuses[instance.id] = {'status': 'Offline', 'error': 'Could not connect. Check logs for details.'}
-            
-    return render_template('instances.html', configs=instances, instance_statuses=instance_statuses)
+    instance_statuses = {instance.id: get_instance_status(instance) for instance in instances}
+    arr_instances = ArrInstance.query.order_by(ArrInstance.name).all()
+    return render_template('instances.html', configs=instances, instance_statuses=instance_statuses, arr_instances=arr_instances)
 
-@app.route('/instances/edit/<instance_id>', methods=['GET', 'POST'])
+@app.route('/instances/new', methods=['GET', 'POST'])
+def new_instance():
+    instance = Instance()
+    if request.method == 'POST':
+        return _save_instance(instance)
+    return _render_instance_page(instance, _instance_values(instance))
+
+@app.route('/instances/<int:instance_id>', methods=['GET', 'POST'])
 def edit_instance(instance_id):
     instance = Instance.query.get_or_404(instance_id)
-
     if request.method == 'POST':
-        tag_nohardlinks = request.form.get('tag_nohardlinks') == 'true'
-        if tag_nohardlinks:
-            qbt_download_dir = request.form.get('qbt_download_dir')
-            mapped_download_dir = request.form.get('mapped_download_dir')
-            if not qbt_download_dir or not mapped_download_dir:
-                flash('Path mappings are required when hard link tagging is enabled.', 'danger')
-                return redirect(url_for('edit_instance', instance_id=instance_id))
-            
-        instance.name = request.form['name']
-        instance.host = request.form['host']
-        instance.username = request.form['username']
-        if request.form.get('password'):
-            instance.password = request.form['password']
-        instance.qbt_download_dir = request.form.get('qbt_download_dir')
-        instance.mapped_download_dir = request.form.get('mapped_download_dir')
-        instance.tag_nohardlinks = request.form.get('tag_nohardlinks') == 'true'
-        instance.remove_category_on_nohl_removal = request.form.get('remove_category_on_nohl_removal') == 'true'
-        instance.nohl_removal_categories = request.form.get('nohl_removal_categories', '')
-        instance.nohl_skip_arr_import_blocked = request.form.get('nohl_skip_arr_import_blocked') == 'true'
-        instance.pause_cross_seeded_torrents = request.form.get('pause_cross_seeded_torrents') == 'true'
-        instance.tag_unregistered_torrents = request.form.get('tag_unregistered_torrents') == 'true'
-        db.session.commit()
-        flash(f"Instance '{instance.name}' updated successfully!", 'success')
-        return redirect(url_for('instances'))
+        return _save_instance(instance)
+    return _render_instance_page(instance, _instance_values(instance))
 
-    return render_template('edit_instance.html', instance=instance)
+@app.route('/instances/edit/<int:instance_id>')
+def legacy_edit_instance(instance_id):
+    return redirect(url_for('edit_instance', instance_id=instance_id))
 
 @app.route('/instances/delete/<instance_id>', methods=['POST'])
 def delete_instance(instance_id):
@@ -831,6 +869,9 @@ if __name__ == '__main__':
     
     settings = load_settings()
     from scheduler import run_all_jobs
+    # Running as __main__, the scheduler imports a second copy of this module; share its status cache.
+    import app as app_module
+    INSTANCE_STATUS_CACHE = app_module.INSTANCE_STATUS_CACHE
     scheduler = BackgroundScheduler()
 
     interval_minutes = settings.get('scheduler_interval_minutes', 10)

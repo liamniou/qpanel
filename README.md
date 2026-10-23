@@ -16,7 +16,7 @@ The tool can:
 - tag torrents that don't have hard links with tag `noHL` (useful for torrent clients used by Sonarr/Radarr), optionally skipping completed downloads that are still waiting for import in Sonarr/Radarr (e.g. "Manual Import required");
 - pause cross-seeded torrents;
 - tag "unregistered" torrents with tag `unregistered`;
-- remove the qBittorrent category from completed downloads that Sonarr/Radarr won't import because they are "Not a Custom Format upgrade" for existing files, so they leave the arr queue but keep seeding (configure Sonarr/Radarr instances under **Settings**).
+- remove the qBittorrent category from completed downloads that Sonarr/Radarr won't import because they are "Not a Custom Format upgrade" for existing files, so they leave the arr queue but keep seeding (configure Sonarr/Radarr instances under **Instances**).
 
 ## Getting Started
 
@@ -47,4 +47,9 @@ The tool can:
 
 ## Configuration
 
-All configuration is done through the web interface. Simply navigate to the "Settings" page to configure global settings, and the "Instances" and "Rules" pages to manage your qBittorrent instances and rules. 
+All configuration is done through the web interface:
+
+- **Instances** – your qBittorrent clients and the Sonarr/Radarr instances qPanel talks to. Each qBittorrent instance has its own page with sections for *Connection*, *Download paths*, *Hard links (noHL)*, *Torrent hygiene* (cross-seed pausing, unregistered tagging), *Orphaned files* and *Rules* (assign rules to the instance).
+- **Rules** – reusable seeding/speed limits, matched by tracker or tag.
+- **Activity** – the action log and orphaned files found by the scanner.
+- **Settings** – scheduler interval, cache, notifications (Telegram/Discord) and maintenance actions. 
