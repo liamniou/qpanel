@@ -156,13 +156,15 @@ TORRENT_LIMIT_ATTRS = {
 
 
 def rule_matches(rule, torrent, get_tracker_urls) -> bool:
-    """True if ANY of the rule's comma-separated values matches the torrent's tags/trackers."""
+    """True if ANY of the rule's comma-separated values matches the torrent's tags/trackers/category."""
     rule_values = [v.strip() for v in rule.condition_value.split(',') if v.strip()]
     if rule.condition_type == 'tag':
         current_tags = {t.strip() for t in torrent.tags.split(',') if t.strip()}
         return any(value in current_tags for value in rule_values)
     if rule.condition_type == 'tracker':
         return any(value in url for url in get_tracker_urls() for value in rule_values)
+    if rule.condition_type == 'category':
+        return (torrent.category or '') in rule_values
     return False
 
 

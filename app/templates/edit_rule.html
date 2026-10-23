@@ -33,6 +33,7 @@
                         <select class="form-select" id="condition_type" name="condition_type" onchange="updateConditionValueOptions()">
                             <option value="tag" {% if rule.condition_type == 'tag' %}selected{% endif %}>Tag</option>
                             <option value="tracker" {% if rule.condition_type == 'tracker' %}selected{% endif %}>Tracker</option>
+                            <option value="category" {% if rule.condition_type == 'category' %}selected{% endif %}>Category</option>
                         </select>
                     </div>
                     <div class="col-md-6 mb-3">
@@ -152,12 +153,8 @@
         const optionsContainer = document.querySelector('.multi-select-options');
         optionsContainer.innerHTML = '';
 
-        let options;
-        if (conditionType === 'tracker') {
-            options = ruleOptions.trackers;
-        } else {
-            options = ruleOptions.tags;
-        }
+        const optionsByType = { tracker: ruleOptions.trackers, tag: ruleOptions.tags, category: ruleOptions.categories };
+        const options = optionsByType[conditionType] || [];
 
         for (const option of options) {
             const div = document.createElement('div');

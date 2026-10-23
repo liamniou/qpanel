@@ -89,7 +89,7 @@
         <div class="card mb-3">
             <div class="card-header">
                 <h3 class="card-title">Add rule</h3>
-                <p class="card-description">Match torrents by tracker or tag, then set the limits to apply. New rules are added at the bottom of the order.</p>
+                <p class="card-description">Match torrents by tracker, tag or category, then set the limits to apply. New rules are added at the bottom of the order.</p>
             </div>
             <div class="card-body">
                 <div class="row">
@@ -105,6 +105,7 @@
                         <select class="form-select" id="condition_type" name="condition_type" onchange="updateConditionValueOptions()">
                             <option value="tag">Tag</option>
                             <option value="tracker">Tracker</option>
+                            <option value="category">Category</option>
                         </select>
                     </div>
                     <div class="col-md-6 mb-3">
@@ -238,12 +239,8 @@
         const optionsContainer = document.querySelector('.multi-select-options');
         optionsContainer.innerHTML = '';
 
-        let options;
-        if (conditionType === 'tracker') {
-            options = ruleOptions.trackers;
-        } else {
-            options = ruleOptions.tags;
-        }
+        const optionsByType = { tracker: ruleOptions.trackers, tag: ruleOptions.tags, category: ruleOptions.categories };
+        const options = optionsByType[conditionType] || [];
 
         for (const option of options) {
             const div = document.createElement('div');

@@ -710,16 +710,18 @@ def clear_cache():
 @app.route('/api/rule-options')
 def get_rule_options():
     cached_data = read_cache()
-    if cached_data:
+    if cached_data and 'categories' in cached_data:
         return jsonify(cached_data)
 
     instances = Instance.query.all()
     all_trackers = set()
     all_tags = set()
+    all_categories = set()
 
     if not instances:
         all_trackers.add('N/A')
         all_tags.add('N/A')
+        all_categories.add('N/A')
     else:
         for instance in instances:
             client = get_client(instance)
@@ -730,6 +732,8 @@ def get_rule_options():
                         for tag in tags:
                             if tag:
                                 all_tags.add(tag)
+
+                    all_categories.update(name for name in (client.torrents_categories() or {}) if name)
 
                     torrents = get_all_torrents(client)
                     for torrent in torrents:
@@ -745,10 +749,13 @@ def get_rule_options():
         all_trackers.add('N/A')
     if not all_tags:
         all_tags.add('N/A')
+    if not all_categories:
+        all_categories.add('N/A')
 
     fetched_data = {
         'trackers': sorted(list(all_trackers)),
-        'tags': sorted(list(all_tags))
+        'tags': sorted(list(all_tags)),
+        'categories': sorted(all_categories)
     }
     
     write_cache(fetched_data)
